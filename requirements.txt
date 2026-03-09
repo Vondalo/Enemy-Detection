@@ -4,3 +4,10 @@ opencv-python
 pandas
 matplotlib
 scikit-learn
+ultralytics
+albumentations
+Pillow
+numpy
+pyautogui
+keyboard
+yt-dlp
