@@ -8,7 +8,7 @@ from ultralytics import YOLO
 # -----------------------------
 # CONFIGURATION
 # -----------------------------
-VIDEO_PATH = r"C:\Users\Eray\Documents\GitHub\Enemy-Detection\src\videos\video1.mp4"
+VIDEO_PATH = r"C:\Users\Eray\Documents\GitHub\Enemy-Detection\src\videos\Sicko_Mode_Fortnite_Montage.f400.mp4"
 OUTPUT_DIR = r"dataset/uncleaned"
 CSV_PATH = r"dataset/uncleaned/labels.csv"
 FRAME_SKIP = 5                   # process every 5th frame
@@ -90,11 +90,22 @@ def mouse_callback(event, x, y, flags, param):
 # -----------------------------
 cap = cv2.VideoCapture(VIDEO_PATH)
 frame_index = 0
-image_index = 0
 
-with open(CSV_PATH, "w", newline="") as csvfile:
+# Determine starting image_index from existing data so we don't overwrite
+if os.path.exists(CSV_PATH) and os.path.getsize(CSV_PATH) > 0:
+    import pandas as pd
+    existing = pd.read_csv(CSV_PATH)
+    max_idx = existing['filename'].str.extract(r'frame_(\d+)').astype(float).max().values[0]
+    image_index = int(max_idx) + 1 if not np.isnan(max_idx) else 0
+else:
+    image_index = 0
+
+# Append to CSV instead of overwriting; write header only if file is new
+write_header = not os.path.exists(CSV_PATH) or os.path.getsize(CSV_PATH) == 0
+with open(CSV_PATH, "a", newline="") as csvfile:
     writer = csv.writer(csvfile)
-    writer.writerow(["filename","x_norm","y_norm"])
+    if write_header:
+        writer.writerow(["filename","x_norm","y_norm"])
 
     while True:
         ret, frame = cap.read()

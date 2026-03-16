@@ -6,8 +6,8 @@ matplotlib
 scikit-learn
 ultralytics
 albumentations
-pillow
-tqdm
+Pillow
+numpy
 pyautogui
 keyboard
-numpy
+yt-dlp

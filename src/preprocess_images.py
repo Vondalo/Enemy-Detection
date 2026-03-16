@@ -8,7 +8,15 @@ import os
 model = YOLO('yolov8n.pt') # Nutzt ein vortrainiertes Standard-Modell
 raw_dir = "data/raw/"
 output_csv = "data/labels/ground_truth.csv"
-data = []
+
+# Load existing labels so we append instead of overwriting
+if os.path.exists(output_csv):
+    existing_df = pd.read_csv(output_csv)
+    data = existing_df.values.tolist()
+    already_processed = set(existing_df['filename'].tolist())
+else:
+    data = []
+    already_processed = set()
 
 # 2. Augmentation Pipeline (Beispiel)
 transform = A.Compose([
@@ -19,6 +27,9 @@ transform = A.Compose([
 
 # 3. Loop durch die Bilder
 for img_name in os.listdir(raw_dir):
+    # Skip images already processed in a previous run
+    if img_name in already_processed:
+        continue
     img = cv2.imread(os.path.join(raw_dir, img_name))
     results = model(img) # YOLO erkennt Gegner
     
