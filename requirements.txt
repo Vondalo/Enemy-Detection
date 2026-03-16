@@ -11,3 +11,4 @@ numpy
 pyautogui
 keyboard
 yt-dlp
+tqdm
