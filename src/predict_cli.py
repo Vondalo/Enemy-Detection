@@ -13,7 +13,8 @@ from src.model import EnemyLocalizationModel
 
 # Configuration
 MODEL_PATH = "models/best_model.pth"
-CSV_PATH = "src/dataset/uncleaned/labels.csv"
+CSV_PATH_UNCLEANED = "src/dataset/uncleaned/labels.csv"
+CSV_PATH_AUGMENTED = "src/dataset/augmented/augmented_labels.csv"
 
 # Image preprocessing (same as training)
 TRANSFORM = transforms.Compose([
@@ -35,16 +36,18 @@ def load_model(device):
     return model
 
 def get_ground_truth(filename):
-    if not os.path.exists(CSV_PATH):
-        return None
-    try:
-        df = pd.read_csv(CSV_PATH)
-        # Search for exact filename or base name
-        match = df[df['filename'] == os.path.basename(filename)]
-        if not match.empty:
-            return [float(match.iloc[0]['x_norm']), float(match.iloc[0]['y_norm'])]
-    except Exception:
-        pass
+    # Try both CSV files
+    for csv_path in [CSV_PATH_UNCLEANED, CSV_PATH_AUGMENTED]:
+        if not os.path.exists(csv_path):
+            continue
+        try:
+            df = pd.read_csv(csv_path)
+            # Search for exact filename or base name
+            match = df[df['filename'] == os.path.basename(filename)]
+            if not match.empty:
+                return [float(match.iloc[0]['x_norm']), float(match.iloc[0]['y_norm'])]
+        except Exception:
+            pass
     return None
 
 @torch.no_grad()
