@@ -9,9 +9,12 @@ from tqdm import tqdm
 # -----------------------------
 # CONFIGURATION
 # -----------------------------
-VIDEO_PATH = r"C:\Users\richi\Enemy-Dectection\src\videos\Godzilla_Fortnite_Montage.f400.mp4"
-OUTPUT_DIR = r"src/dataset/uncleaned"
-CSV_PATH = r"src/dataset/uncleaned/labels.csv"
+# Get paths relative to this script
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+VIDEO_DIR = os.path.join(SCRIPT_DIR, "videos")
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "dataset", "uncleaned")
+CSV_PATH = os.path.join(OUTPUT_DIR, "labels.csv")
+
 FRAME_SKIP = 5                   # process every 5th frame
 CONF_THRESHOLD = 0.3
 CROSSHAIR_MODE = "center"
@@ -25,14 +28,13 @@ AUGMENTATIONS = ["flip", "brightness"]
 SCREEN_W, SCREEN_H = 1280, 720
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs("dataset/uncleaned", exist_ok=True)
 
 # -----------------------------
 # LOAD YOLO MODEL
 # -----------------------------
 print(f"Loading YOLOv8 model... This might take a few seconds.")
 model = YOLO("yolov8n.pt")  # replace with fine-tuned enemy model if available
-print(f"Model loaded successfully! Opening video: {VIDEO_PATH}")
+print(f"Model loaded successfully! Scanning directory for videos: {VIDEO_DIR}")
 
 # -----------------------------
 # HELPER FUNCTIONS
@@ -91,15 +93,20 @@ def mouse_callback(event, x, y, flags, param):
 # -----------------------------
 # MAIN VIDEO LOOP
 # -----------------------------
-VIDEO_DIR = r"C:\Users\richi\Enemy-Dectection\src\videos"
 video_files = [f for f in os.listdir(VIDEO_DIR) if f.endswith(".mp4")]
+print(f"Found {len(video_files)} video(s) to process.")
 
 # Determine starting image_index from existing data so we don't overwrite
 if os.path.exists(CSV_PATH) and os.path.getsize(CSV_PATH) > 0:
     import pandas as pd
     existing = pd.read_csv(CSV_PATH)
-    max_idx = existing['filename'].str.extract(r'frame_(\d+)').astype(float).max().values[0]
-    image_index = int(max_idx) + 1 if not np.isnan(max_idx) else 0
+    # Filter for frame_N.png pattern
+    mask = existing['filename'].str.match(r'frame_\d+\.png')
+    if mask.any():
+        max_idx = existing.loc[mask, 'filename'].str.extract(r'frame_(\d+)').astype(float).max().values[0]
+        image_index = int(max_idx) + 1 if not np.isnan(max_idx) else 0
+    else:
+        image_index = 0
 else:
     image_index = 0
 

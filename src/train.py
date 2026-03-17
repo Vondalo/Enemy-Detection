@@ -124,7 +124,7 @@ def main():
 
     # Learning rate scheduler: reduce LR when val loss plateaus
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=5, verbose=True
+        optimizer, mode="min", factor=0.5, patience=5
     )
 
     # ---- Training Loop ----
