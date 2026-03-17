@@ -10,8 +10,8 @@ from tqdm import tqdm
 # CONFIGURATION
 # -----------------------------
 VIDEO_PATH = r"C:\Users\richi\Enemy-Dectection\src\videos\Godzilla_Fortnite_Montage.f400.mp4"
-OUTPUT_DIR = r"dataset/uncleaned"
-CSV_PATH = r"dataset/uncleaned/labels.csv"
+OUTPUT_DIR = r"src/dataset/uncleaned"
+CSV_PATH = r"src/dataset/uncleaned/labels.csv"
 FRAME_SKIP = 5                   # process every 5th frame
 CONF_THRESHOLD = 0.3
 CROSSHAIR_MODE = "center"
@@ -208,6 +208,8 @@ for video_name in video_files:
             # -----------------------------
             # SAVE FULL FRAME FOR TRAINING
             # -----------------------------
+            px, py = selected
+            
             # Save the full frame instead of a crop to avoid center bias
             x_norm = px / w
             y_norm = py / h
@@ -220,6 +222,7 @@ for video_name in video_files:
             cv2.imwrite(save_path, save_img)
             
             writer.writerow([filename, x_norm, y_norm])
+            csvfile.flush() # Ensure it's saved to disk immediately
 
             # (Optional) Basic augmentations could be added back here if needed
             # for the full frame, but standard horizontal flip is most common.
@@ -228,6 +231,7 @@ for video_name in video_files:
                 aug_filename = f"frame_{image_index}_flip.png"
                 cv2.imwrite(os.path.join(OUTPUT_DIR, aug_filename), flipped)
                 writer.writerow([aug_filename, 1.0 - x_norm, y_norm])
+                csvfile.flush() # Ensure it's saved to disk immediately
 
             image_index += 1
             frame_index += 1
