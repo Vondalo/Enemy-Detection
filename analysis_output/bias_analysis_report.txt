@@ -1,0 +1,23 @@
+============================================================
+  DATASET POSITIONAL BIAS ANALYSIS REPORT
+============================================================
+
+Total samples: 1450
+X distribution: mean=0.5000, std=0.1089
+Y distribution: mean=0.5236, std=0.1256
+
+Center 20% (crosshair): 576 samples (39.7%)
+Center 30% (expanded):  936 samples (64.6%)
+
+Quadrant distribution:
+  Top-Left:     32.6%
+  Top-Right:    32.6%
+  Bottom-Left:  17.4%
+  Bottom-Right: 17.4%
+
+Edges (within 10%):   10 samples (0.7%)
+Corners (within 15%): 2 samples (0.1%)
+
+Center bias ratio: 9.93x
+
+Conclusion: SEVERE BIAS - Dataset needs rebalancing
