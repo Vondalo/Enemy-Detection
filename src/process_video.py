@@ -188,7 +188,8 @@ for video_name in video_files:
             # SELECTION LOOP
             # -----------------------------
             selected = None
-            print("Click roughly on enemy or press number key for detection, then 'a' to accept, 'd' to skip frame.")
+            skip_video = False
+            print("Click roughly on enemy or press number key for detection, (a)ccept, (d)kip frame, (p) next video.")
 
             while selected is None:
                 cv2.imshow("Preview", preview_zoom)
@@ -207,6 +208,15 @@ for video_name in video_files:
                 elif key == ord('d'):
                     selected = False
                     break
+                
+                # 'p' skips to next video
+                elif key == ord('p'):
+                    skip_video = True
+                    break
+
+            if skip_video:
+                print(f"Skipping video: {video_name}")
+                break
 
             if not selected:
                 frame_index += 1

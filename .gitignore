@@ -30,19 +30,16 @@ ENV/
 # Models & Large Data
 # Ignore heavy model checkpoints
 models/*.pth
-# Ignore video source files
-src/videos/*.mp4
-src/videos/*.f400.mp4
-src/videos/*.txt
+*.pt
+
+# Ignore video source files entirely
+src/videos/
+!src/videos/links.txt
 
 # Dataset
-# We ignore high-level dataset folders but specifically ALLOW the uncleaned images as requested
-# First, ignore everything in dataset to be safe
-dataset/
-# Then allow the uncleaned folder
-!src/dataset/uncleaned/
-!src/dataset/uncleaned/*.png
-!src/dataset/uncleaned/*.csv
+# Ignore heavy image files but keep the labels
+src/dataset/uncleaned/*.png
+!src/dataset/uncleaned/labels.csv
 
 # Overlays (Inference results)
 overlays/
