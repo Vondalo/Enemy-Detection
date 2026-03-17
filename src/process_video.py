@@ -205,40 +205,29 @@ for video_name in video_files:
                 frame_index += 1
                 continue
 
-            px, py = selected
-
             # -----------------------------
-            # CROP & RESIZE FOR TRAINING
+            # SAVE FULL FRAME FOR TRAINING
             # -----------------------------
-            x1_crop = max(int(px - CROP_SIZE//2), 0)
-            y1_crop = max(int(py - CROP_SIZE//2), 0)
-            x2_crop = min(x1_crop + CROP_SIZE, w)
-            y2_crop = min(y1_crop + CROP_SIZE, h)
-            cropped_frame = frame[y1_crop:y2_crop, x1_crop:x2_crop]
-
-            # Adjust center for cropped image
-            cx_crop = px - x1_crop
-            cy_crop = py - y1_crop
-
-            # Save image
+            # Save the full frame instead of a crop to avoid center bias
+            x_norm = px / w
+            y_norm = py / h
+            
+            # Save resized frame (640x360 is still 16:9, but much smaller than 1080p)
+            save_img = cv2.resize(frame, (640, 360))
+            
             filename = f"frame_{image_index}.png"
             save_path = os.path.join(OUTPUT_DIR, filename)
-            cv2.imwrite(save_path, cv2.resize(cropped_frame, (CROP_SIZE,CROP_SIZE)))
-
-            # Normalized coordinates
-            x_norm = cx_crop / CROP_SIZE
-            y_norm = cy_crop / CROP_SIZE
+            cv2.imwrite(save_path, save_img)
+            
             writer.writerow([filename, x_norm, y_norm])
 
-            # AUGMENTATIONS
-            pil_img = Image.fromarray(cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB))
-            aug_data = augment_image(pil_img, cx_crop, cy_crop)
-            for i,(aug_img,ax,ay) in enumerate(aug_data):
-                aug_filename = f"frame_{image_index}_aug{i}.png"
-                aug_path = os.path.join(OUTPUT_DIR, aug_filename)
-                aug_img = aug_img.resize((CROP_SIZE,CROP_SIZE))  # ensure 256x256
-                aug_img.save(aug_path)
-                writer.writerow([aug_filename, ax/CROP_SIZE, ay/CROP_SIZE])
+            # (Optional) Basic augmentations could be added back here if needed
+            # for the full frame, but standard horizontal flip is most common.
+            if "flip" in AUGMENTATIONS:
+                flipped = cv2.flip(save_img, 1)
+                aug_filename = f"frame_{image_index}_flip.png"
+                cv2.imwrite(os.path.join(OUTPUT_DIR, aug_filename), flipped)
+                writer.writerow([aug_filename, 1.0 - x_norm, y_norm])
 
             image_index += 1
             frame_index += 1
