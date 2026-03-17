@@ -19,6 +19,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.dataset import get_dataloaders
 from src.model import EnemyLocalizationModel, count_parameters
 
+# Global optimizations
+torch.backends.cudnn.benchmark = True
+
 
 def train_one_epoch(model, loader, criterion, optimizer, device):
     """Run one training epoch. Returns average loss."""
@@ -26,15 +29,22 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
     total_loss = 0.0
     count = 0
 
+    scaler = torch.amp.GradScaler('cuda')
+    
     for images, labels in loader:
-        images = images.to(device)
-        labels = labels.to(device)
+        images = images.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
 
         optimizer.zero_grad()
-        predictions = model(images)
-        loss = criterion(predictions, labels)
-        loss.backward()
-        optimizer.step()
+        
+        # Use Mixed Precision
+        with torch.amp.autocast('cuda'):
+            predictions = model(images)
+            loss = criterion(predictions, labels)
+            
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
         total_loss += loss.item() * images.size(0)
         count += images.size(0)
@@ -50,11 +60,12 @@ def validate(model, loader, criterion, device):
     count = 0
 
     for images, labels in loader:
-        images = images.to(device)
-        labels = labels.to(device)
+        images = images.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
 
-        predictions = model(images)
-        loss = criterion(predictions, labels)
+        with torch.amp.autocast('cuda'):
+            predictions = model(images)
+            loss = criterion(predictions, labels)
 
         total_loss += loss.item() * images.size(0)
         count += images.size(0)
@@ -80,9 +91,9 @@ def plot_losses(train_losses, val_losses, save_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Train Enemy Localization Model")
-    parser.add_argument("--csv", type=str, default="src/dataset/uncleaned/labels.csv",
+    parser.add_argument("--csv", type=str, default="src/dataset/augmented/augmented_labels.csv",
                         help="Path to labels CSV")
-    parser.add_argument("--img_dir", type=str, default="src/dataset/uncleaned",
+    parser.add_argument("--img_dir", type=str, default="src/dataset/augmented",
                         help="Path to image directory")
     parser.add_argument("--epochs", type=int, default=30,
                         help="Number of training epochs")
@@ -107,6 +118,7 @@ def main():
         csv_path=args.csv,
         img_dir=args.img_dir,
         batch_size=args.batch_size,
+        num_workers=4, # Increase workers to prevent CPU bottleneck
     )
 
     if len(dataset) == 0:
