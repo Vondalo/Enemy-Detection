@@ -35,7 +35,9 @@ def load_labels_by_video(csv_path: str) -> Dict[str, List[Dict]]:
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            video_id = row['video_id']
+            video_id = row.get('video_id')
+            if not video_id:
+                continue
             video_labels[video_id].append(row)
     
     return dict(video_labels)
@@ -43,8 +45,8 @@ def load_labels_by_video(csv_path: str) -> Dict[str, List[Dict]]:
 
 def analyze_spatial_distribution(labels: List[Dict]) -> Dict:
     """Analyze spatial distribution of labels."""
-    has_enemy_count = sum(1 for l in labels if int(l['has_enemy']) == 1)
-    no_enemy_count = len(labels) - has_enemy_count
+    has_enemy_count = len(labels)
+    no_enemy_count = 0
     
     if has_enemy_count == 0:
         return {'has_enemy': 0, 'no_enemy': 0, 'center_ratio': 0}
@@ -52,12 +54,13 @@ def analyze_spatial_distribution(labels: List[Dict]) -> Dict:
     # Count center vs edge
     center_count = 0
     for label in labels:
-        if int(label['has_enemy']) == 1:
-            x = float(label['x_center'])
-            y = float(label['y_center'])
-            # Center 20%
-            if 0.4 <= x <= 0.6 and 0.4 <= y <= 0.6:
-                center_count += 1
+        x_val = label.get('x_norm', label.get('x_center', 0.5))
+        y_val = label.get('y_norm', label.get('y_center', 0.5))
+        x = float(x_val) if x_val not in (None, '') else 0.5
+        y = float(y_val) if y_val not in (None, '') else 0.5
+        # Center 20%
+        if 0.4 <= x <= 0.6 and 0.4 <= y <= 0.6:
+            center_count += 1
     
     return {
         'has_enemy': has_enemy_count,
@@ -201,7 +204,7 @@ def copy_files_for_split(video_labels: Dict[str, List[Dict]],
                 writer.writerow(label)
                 
                 # Copy image
-                img_name = label.get('filename', f"{video_id}_frame_{int(label['frame_index']):06d}.png")
+                img_name = label.get('filename', f"{video_id}_frame_{int(label.get('frame_idx', 0)):06d}.png")
                 src_path = input_img_dir / img_name
                 
                 # Try alternate paths
@@ -259,12 +262,19 @@ def print_split_statistics(video_labels: Dict[str, List[Dict]],
     
     # Spatial distribution
     def get_center_ratio(labels):
-        enemy_labels = [l for l in labels if int(l['has_enemy']) == 1]
-        if not enemy_labels:
+        if not labels:
             return 0
-        center = sum(1 for l in enemy_labels 
-                    if 0.4 <= float(l['x_center']) <= 0.6 and 0.4 <= float(l['y_center']) <= 0.6)
-        return center / len(enemy_labels)
+        
+        center = 0
+        for l in labels:
+            x_val = l.get('x_norm', l.get('x_center', 0.5))
+            y_val = l.get('y_norm', l.get('y_center', 0.5))
+            x = float(x_val) if x_val not in (None, '') else 0.5
+            y = float(y_val) if y_val not in (None, '') else 0.5
+            if 0.4 <= x <= 0.6 and 0.4 <= y <= 0.6:
+                center += 1
+                
+        return center / len(labels)
     
     train_center = get_center_ratio(train_labels)
     val_center = get_center_ratio(val_labels)
@@ -275,12 +285,12 @@ def print_split_statistics(video_labels: Dict[str, List[Dict]],
     print(f"  Difference: {abs(train_center - val_center):.1%}")
     
     # Negative samples
-    train_neg = sum(1 for l in train_labels if int(l['has_enemy']) == 0)
-    val_neg = sum(1 for l in val_labels if int(l['has_enemy']) == 0)
+    train_neg = 0
+    val_neg = 0
     
     print(f"\nNegative samples (no enemy):")
-    print(f"  Train: {train_neg} ({train_neg / len(train_labels):.1%})")
-    print(f"  Val: {val_neg} ({val_neg / len(val_labels):.1%})")
+    print(f"  Train: {train_neg} ({train_neg / max(1, len(train_labels)):.1%})")
+    print(f"  Val: {val_neg} ({val_neg / max(1, len(val_labels)):.1%})")
 
 
 def main():

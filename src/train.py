@@ -91,10 +91,17 @@ def plot_losses(train_losses, val_losses, save_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Train Enemy Localization Model")
-    parser.add_argument("--csv", type=str, default="src/dataset/augmented/augmented_labels.csv",
-                        help="Path to labels CSV")
-    parser.add_argument("--img_dir", type=str, default="src/dataset/augmented",
-                        help="Path to image directory")
+    parser.add_argument("--csv", type=str, default="dataset/final/train/labels.csv",
+                        help="Path to training labels CSV (backward compatibility)")
+    parser.add_argument("--img_dir", type=str, default="dataset/final/train/images",
+                        help="Path to training image directory (backward compatibility)")
+    parser.add_argument("--train_csv", type=str, help="Path to training labels CSV")
+    parser.add_argument("--train_dir", type=str, help="Path to training image directory")
+    parser.add_argument("--val_csv", type=str, default="dataset/final/val/labels.csv",
+                        help="Path to validation labels CSV")
+    parser.add_argument("--val_dir", type=str, default="dataset/final/val/images",
+                        help="Path to validation image directory")
+    
     parser.add_argument("--epochs", type=int, default=30,
                         help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=16,
@@ -114,11 +121,19 @@ def main():
     print(f"[Config] Epochs: {args.epochs} | Batch: {args.batch_size} | LR: {args.lr}")
 
     # ---- Data ----
+    # Determine which paths to use
+    t_csv = args.train_csv if args.train_csv else args.csv
+    t_dir = args.train_dir if args.train_dir else args.img_dir
+    v_csv = args.val_csv
+    v_dir = args.val_dir
+
     train_loader, val_loader, dataset = get_dataloaders(
-        csv_path=args.csv,
-        img_dir=args.img_dir,
+        csv_path=t_csv,
+        img_dir=t_dir,
+        val_csv=v_csv,
+        val_dir=v_dir,
         batch_size=args.batch_size,
-        num_workers=4, # Increase workers to prevent CPU bottleneck
+        num_workers=0, # Reduced for stability on some Windows setups
     )
 
     if len(dataset) == 0:

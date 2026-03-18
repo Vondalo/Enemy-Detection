@@ -30,6 +30,7 @@ import csv
 import json
 import random
 import hashlib
+import logging
 import numpy as np
 from PIL import Image
 from datetime import datetime
@@ -38,6 +39,15 @@ from collections import defaultdict
 from typing import List, Dict, Tuple, Optional
 import argparse
 from tqdm import tqdm
+import time
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s: %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 try:
     from ultralytics import YOLO
@@ -74,6 +84,17 @@ CENTER_CELL_PENALTY = 0.3   # Reduce center cell quota by 70%
 MAX_DETECTIONS_PER_FRAME = 5
 MIN_ENEMY_AREA_PX = 100
 MAX_ENEMY_AREA_RATIO = 0.25
+MAX_BOTTOM_Y_RATIO = 0.7  # Don't accept detections below 70% of screen height
+
+# Self-Player Filtering (Third-Person Games)
+SELF_PLAYER_BOTTOM_REGION_PCT = 0.35  # Bottom 35% of screen
+SELF_PLAYER_CENTER_ZONE_X = (0.3, 0.7)  # Horizontal range for player zone
+SELF_PLAYER_CENTER_ZONE_Y = (0.6, 1.0)  # Vertical range (bottom 40%)
+SELF_PLAYER_MAX_SIZE_RATIO = 0.15  # Max size (self player is large)
+SELF_PLAYER_MIN_SIZE_RATIO = 0.05  # Min size to consider
+SELF_PLAYER_IOU_THRESHOLD = 0.3  # IoU threshold for exclusion
+SELF_PLAYER_BOTTOM_EDGE_THRESHOLD = 0.85  # Bottom edge proximity
+SELF_PLAYER_TEMPORAL_FRAMES = 10  # Frames to track for temporal filtering
 
 # ============================== DATA STRUCTURES ==============================
 
@@ -237,6 +258,243 @@ class QualityControl:
         return distance_px > MAX_TRACK_JUMP_PX
 
 
+class SelfPlayerFilter:
+    """
+    Filters out the local player character from detections.
+    Critical for third-person games where player avatar is visible.
+    """
+    
+    def __init__(self):
+        # Track detections in potential self-player zone for temporal consistency
+        self.temporal_detections = []  # List of (frame_idx, bbox, confidence)
+        self.self_player_template = None  # Template bbox for persistent self-player
+        self.frames_since_seen = 0
+    
+    @staticmethod
+    def compute_iou(box1: Tuple[float, float, float, float], 
+                    box2: Tuple[float, float, float, float]) -> float:
+        """Compute Intersection over Union for two boxes (x1, y1, x2, y2 format)."""
+        x1_1, y1_1, x2_1, y2_1 = box1
+        x1_2, y1_2, x2_2, y2_2 = box2
+        
+        # Compute intersection
+        x1_i = max(x1_1, x1_2)
+        y1_i = max(y1_1, y1_2)
+        x2_i = min(x2_1, x2_2)
+        y2_i = min(y2_1, y2_2)
+        
+        if x2_i <= x1_i or y2_i <= y1_i:
+            return 0.0
+        
+        intersection = (x2_i - x1_i) * (y2_i - y1_i)
+        
+        # Compute areas
+        area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
+        area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
+        union = area1 + area2 - intersection
+        
+        return intersection / union if union > 0 else 0.0
+    
+    def get_self_player_region(self, img_width: int, img_height: int) -> Tuple[int, int, int, int]:
+        """
+        Define the self-player exclusion region (typically bottom-center of screen).
+        Returns: (x1, y1, x2, y2) in pixel coordinates.
+        """
+        # Bottom region (default 35% of screen)
+        y_start = int(img_height * (1 - SELF_PLAYER_BOTTOM_REGION_PCT))
+        y_end = img_height
+        
+        # Center horizontally (default 30-70% of width)
+        x_start = int(img_width * SELF_PLAYER_CENTER_ZONE_X[0])
+        x_end = int(img_width * SELF_PLAYER_CENTER_ZONE_X[1])
+        
+        return (x_start, y_start, x_end, y_end)
+    
+    def is_in_self_player_zone(self, bbox: Tuple[float, float, float, float], 
+                               img_width: int, img_height: int) -> Tuple[bool, float]:
+        """
+        Check if detection is in self-player zone using IoU.
+        Returns: (is_in_zone, iou_value)
+        """
+        sp_x1, sp_y1, sp_x2, sp_y2 = self.get_self_player_region(img_width, img_height)
+        
+        # Compute IoU with self-player region
+        iou = self.compute_iou(
+            bbox,
+            (sp_x1, sp_y1, sp_x2, sp_y2)
+        )
+        
+        return iou > SELF_PLAYER_IOU_THRESHOLD, iou
+    
+    def check_geometric_rules(self, bbox: Tuple[float, float, float, float],
+                              img_width: int, img_height: int) -> Tuple[bool, str]:
+        """
+        Apply geometric filtering rules for self-player detection.
+        Returns: (is_likely_self_player, reason)
+        """
+        x1, y1, x2, y2 = bbox
+        box_w = x2 - x1
+        box_h = y2 - y1
+        area = box_w * box_h
+        
+        # Normalize dimensions
+        norm_w = box_w / img_width
+        norm_h = box_h / img_height
+        norm_area = area / (img_width * img_height)
+        
+        # Check 1: Unusually large box (self player is typically large)
+        if norm_area > SELF_PLAYER_MAX_SIZE_RATIO:
+            return True, f"large_size ({norm_area:.2%})"
+        
+        # Check 2: Bottom edge proximity (self player often at bottom)
+        bottom_edge_proximity = y2 / img_height
+        if bottom_edge_proximity > SELF_PLAYER_BOTTOM_EDGE_THRESHOLD:
+            # Combined with center position
+            center_x = (x1 + x2) / 2 / img_width
+            if SELF_PLAYER_CENTER_ZONE_X[0] < center_x < SELF_PLAYER_CENTER_ZONE_X[1]:
+                return True, f"bottom_edge ({bottom_edge_proximity:.2%})"
+        
+        # Check 3: Position in typical player-avatar zone (lower-center)
+        center_x = (x1 + x2) / 2 / img_width
+        center_y = (y1 + y2) / 2 / img_height
+        
+        if (SELF_PLAYER_CENTER_ZONE_X[0] < center_x < SELF_PLAYER_CENTER_ZONE_X[1] and
+            SELF_PLAYER_CENTER_ZONE_Y[0] < center_y < SELF_PLAYER_CENTER_ZONE_Y[1]):
+            # And within size range
+            if SELF_PLAYER_MIN_SIZE_RATIO < norm_area < SELF_PLAYER_MAX_SIZE_RATIO:
+                return True, f"player_zone ({center_x:.2f}, {center_y:.2f})"
+        
+        return False, ""
+    
+    def update_temporal_tracking(self, frame_idx: int, detections: List[Dict],
+                                  img_width: int, img_height: int) -> List[Dict]:
+        """
+        Track detections over time to identify persistent self-player.
+        Returns filtered detections.
+        """
+        # Add current detections to history
+        current_dets = []
+        for det in detections:
+            bbox = det['bbox']
+            is_sp, reason = self.check_geometric_rules(bbox, img_width, img_height)
+            if is_sp:
+                current_dets.append({
+                    'frame': frame_idx,
+                    'bbox': bbox,
+                    'conf': det['confidence'],
+                    'reason': reason
+                })
+        
+        self.temporal_detections.extend(current_dets)
+        
+        # Keep only recent history
+        cutoff_frame = frame_idx - SELF_PLAYER_TEMPORAL_FRAMES
+        self.temporal_detections = [
+            d for d in self.temporal_detections if d['frame'] >= cutoff_frame
+        ]
+        
+        # Find persistent detections (appeared in multiple frames)
+        persistent_bboxes = self._find_persistent_detections()
+        
+        # Filter current detections
+        filtered = []
+        for det in detections:
+            bbox = det['bbox']
+            
+            # Check if matches persistent self-player
+            is_self_player = False
+            
+            # 1. Check geometric rules
+            is_sp_geo, reason_geo = self.check_geometric_rules(bbox, img_width, img_height)
+            if is_sp_geo:
+                is_self_player = True
+                logger.debug(f"  [SelfPlayerFilter] Geometric match: {reason_geo}")
+            
+            # 2. Check IoU with self-player region
+            is_sp_iou, iou_val = self.is_in_self_player_zone(bbox, img_width, img_height)
+            if is_sp_iou:
+                is_self_player = True
+                logger.debug(f"  [SelfPlayerFilter] IoU match: {iou_val:.2f}")
+            
+            # 3. Check against persistent self-player template
+            if persistent_bboxes:
+                for pbbox in persistent_bboxes:
+                    if self.compute_iou(bbox, pbbox) > 0.5:
+                        is_self_player = True
+                        logger.debug(f"  [SelfPlayerFilter] Temporal match (persistent)")
+                        break
+            
+            if not is_self_player:
+                filtered.append(det)
+            else:
+                logger.info(f"  [SelfPlayerFilter] Filtered detection (conf: {det['confidence']:.2f})")
+        
+        return filtered
+    
+    def _find_persistent_detections(self) -> List[Tuple[float, float, float, float]]:
+        """Find detections that persist across multiple frames (likely self-player)."""
+        if len(self.temporal_detections) < 3:
+            return []
+        
+        # Group by similar position
+        groups = []
+        for det in self.temporal_detections:
+            bbox = det['bbox']
+            cx = (bbox[0] + bbox[2]) / 2
+            cy = (bbox[1] + bbox[3]) / 2
+            
+            # Find matching group
+            found_group = False
+            for group in groups:
+                g_cx = (group['center'][0] + group['center'][2]) / 2
+                g_cy = (group['center'][1] + group['center'][3]) / 2
+                
+                # Within 50px distance
+                if abs(cx - g_cx) < 50 and abs(cy - g_cy) < 50:
+                    group['bboxes'].append(bbox)
+                    group['frames'].append(det['frame'])
+                    found_group = True
+                    break
+            
+            if not found_group:
+                groups.append({
+                    'center': bbox,
+                    'bboxes': [bbox],
+                    'frames': [det['frame']]
+                })
+        
+        # Return groups with 3+ detections (persistent)
+        persistent = []
+        for group in groups:
+            if len(group['bboxes']) >= 3:
+                # Average bbox
+                avg_bbox = (
+                    sum(b[0] for b in group['bboxes']) / len(group['bboxes']),
+                    sum(b[1] for b in group['bboxes']) / len(group['bboxes']),
+                    sum(b[2] for b in group['bboxes']) / len(group['bboxes']),
+                    sum(b[3] for b in group['bboxes']) / len(group['bboxes']),
+                )
+                persistent.append(avg_bbox)
+        
+        return persistent
+    
+    def draw_exclusion_zone(self, frame: np.ndarray, alpha: float = 0.3):
+        """Visualize the self-player exclusion zone on frame."""
+        h, w = frame.shape[:2]
+        x1, y1, x2, y2 = self.get_self_player_region(w, h)
+        
+        # Create overlay
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 255), -1)
+        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+        
+        # Add label
+        cv2.putText(frame, "SELF-PLAYER EXCLUSION ZONE", (x1 + 10, y1 - 10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        
+        return frame
+
+
 class ObjectTracker:
     """Simple tracker for label propagation with drift detection."""
     
@@ -358,43 +616,51 @@ class FrameSampler:
         Pre-scan video to find off-center enemies.
         Returns frames with detections in edge/corner regions.
         """
+        logger.info(f"  [Pre-scan] Scanning for edge/corner frames...")
         cap = cv2.VideoCapture(video_path)
         edge_frames = []
         
-        sample_interval = max(1, self.total_frames // (n_samples * 2))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        sample_interval = max(1, total_frames // (n_samples * 2))
         frame_idx = 0
         
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            if frame_idx % sample_interval == 0:
-                h, w = frame.shape[:2]
-                results = yolo_model(frame, verbose=False)[0]
-                
-                for box in results.boxes:
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    cx, cy = (x1 + x2) / 2 / w, (y1 + y2) / 2 / h
-                    
-                    # Check if in edge or corner
-                    is_edge = cx < 0.15 or cx > 0.85 or cy < 0.15 or cy > 0.85
-                    is_corner = (cx < 0.2 or cx > 0.8) and (cy < 0.2 or cy > 0.8)
-                    
-                    if is_corner and frame_idx not in self.selected_frames:
-                        edge_frames.append((frame_idx, 'corner', float(box.conf)))
-                        self.selected_frames.add(frame_idx)
-                        break
-                    elif is_edge and frame_idx not in self.selected_frames:
-                        edge_frames.append((frame_idx, 'edge', float(box.conf)))
-                        self.selected_frames.add(frame_idx)
-                        break
-            
-            frame_idx += 1
-            if len(edge_frames) >= n_samples:
-                break
+        logger.info(f"  [Pre-scan] Total frames: {total_frames}, sampling every {sample_interval} frames")
         
+        with tqdm(total=n_samples, desc="  Pre-scanning", unit="found", leave=False) as pbar:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                if frame_idx % sample_interval == 0:
+                    h, w = frame.shape[:2]
+                    results = yolo_model(frame, verbose=False)[0]
+                    
+                    found_edge_or_corner = False
+                    for box in results.boxes:
+                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                        cx, cy = (x1 + x2) / 2 / w, (y1 + y2) / 2 / h
+                        
+                        # Check if in edge or corner
+                        is_edge = cx < 0.15 or cx > 0.85 or cy < 0.15 or cy > 0.85
+                        is_corner = (cx < 0.2 or cx > 0.8) and (cy < 0.2 or cy > 0.8)
+                        
+                        if (is_corner or is_edge) and frame_idx not in self.selected_frames:
+                            edge_frames.append((frame_idx, 'corner' if is_corner else 'edge', float(box.conf)))
+                            self.selected_frames.add(frame_idx)
+                            found_edge_or_corner = True
+                            pbar.update(1)
+                            logger.debug(f"    Found {('corner' if is_corner else 'edge')} detection at frame {frame_idx} (conf: {float(box.conf):.2f})")
+                            break
+                    
+                    if len(edge_frames) >= n_samples:
+                        logger.info(f"  [Pre-scan] Reached target of {n_samples} edge/corner frames")
+                        break
+                
+                frame_idx += 1
+                
         cap.release()
+        logger.info(f"  [Pre-scan] Found {len(edge_frames)} edge/corner frames total")
         return [f[0] for f in edge_frames]
     
     def get_all_samples(self, n_exploration: int = 100) -> List[int]:
@@ -426,7 +692,7 @@ class ReviewInterface:
             self.click_point = (x, y)
     
     def display(self, frame: np.ndarray, detections: List[Dict], 
-                mode: str = "confirm") -> str:
+                mode: str = "confirm", show_self_player_zone: bool = False) -> str:
         """
         Display frame with detections and wait for user input.
         
@@ -447,6 +713,20 @@ class ReviewInterface:
         
         # Create display copy
         display = frame.copy()
+        
+        # Draw self-player exclusion zone if requested
+        if show_self_player_zone:
+            sp_x1 = int(w * SELF_PLAYER_CENTER_ZONE_X[0])
+            sp_x2 = int(w * SELF_PLAYER_CENTER_ZONE_X[1])
+            sp_y1 = int(h * (1 - SELF_PLAYER_BOTTOM_REGION_PCT))
+            sp_y2 = h
+            
+            overlay = display.copy()
+            cv2.rectangle(overlay, (sp_x1, sp_y1), (sp_x2, sp_y2), (0, 0, 255), -1)
+            cv2.addWeighted(overlay, 0.25, display, 0.75, 0, display)
+            cv2.rectangle(display, (sp_x1, sp_y1), (sp_x2, sp_y2), (0, 0, 255), 2)
+            cv2.putText(display, "SELF-PLAYER ZONE", (sp_x1 + 5, sp_y1 - 5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
         
         # Draw detections
         for i, det in enumerate(detections):
@@ -481,15 +761,21 @@ class ReviewInterface:
         if mode == 'auto':
             msg = "AUTO-LABEL (press 's' to skip, any key to accept)"
             cv2.putText(display, msg, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            if detections:
+                logger.info(f"  [UI] Auto-label: {len(detections)} detection(s), press any key to accept or 's' to skip")
         elif mode == 'confirm':
             msg = "CONFIRM: 'y'=accept, 'n'=reject, 's'=skip"
             cv2.putText(display, msg, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            if detections:
+                logger.info(f"  [UI] Confirm detection (conf: {detections[0]['confidence']:.2f}) - waiting for input...")
         elif mode == 'select':
             msg = "SELECT: Press 1-9, 'c'+click=manual, 's'=skip"
             cv2.putText(display, msg, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+            logger.info(f"  [UI] Select from {len(detections)} detections (1-{min(9, len(detections))}) or 's' to skip")
         elif mode == 'manual':
             msg = "MANUAL: Click enemy, 'n'=no enemy, 's'=skip"
             cv2.putText(display, msg, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            logger.info(f"  [UI] Manual mode: Click on enemy or press 's' to skip")
         
         # Grid overlay for balancing visualization
         grid_color = (100, 100, 100)
@@ -546,17 +832,27 @@ class ReviewInterface:
 class ImprovedDataPipeline:
     """Main data collection pipeline integrating all components."""
     
-    def __init__(self, videos_dir: str, output_dir: str, yolo_model_path: str = "yolov8n.pt"):
+    def __init__(self, videos_dir: str, output_dir: str, yolo_model_path: str = "yolov8n.pt",
+                 engagement_file: str = None, auto_skip: bool = False, review_uncertain: bool = False):
+        self.engagement_file = engagement_file
         self.videos_dir = Path(videos_dir)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
+        # Store flags
+        self.auto_skip = auto_skip
+        self.review_uncertain = review_uncertain
+        self.uncertain_frames = []  # Store frames that were auto-skipped
+        self.high_confidence_labels = []  # Auto-accepted frames
+        self.confirmed_frames = []  # User-confirmed uncertain frames
+        
         # Initialize components
-        print(f"Loading YOLO model from {yolo_model_path}...")
+        logger.info(f"Loading YOLO model from {yolo_model_path}...")
         self.yolo = YOLO(yolo_model_path)
         self.balancer = SpatialBalancer()
         self.qc = QualityControl()
         self.ui = ReviewInterface()
+        self.self_player_filter = SelfPlayerFilter()
         
         # Storage
         self.labels = []
@@ -574,7 +870,9 @@ class ImprovedDataPipeline:
             'manual': 0,
             'tracked': 0,
             'rejected': 0,
-            'skipped': 0
+            'skipped': 0,
+            'self_player_filtered': 0,
+            'uncertain': 0
         }
     
     def _init_csv(self):
@@ -602,9 +900,10 @@ class ImprovedDataPipeline:
             writer.writerow(entry.to_dict())
         
         self.labels.append(entry)
+        logger.info(f"    [Saved] {img_name} ({entry.source_type}, conf: {entry.confidence:.2f})")
     
-    def _run_detection(self, frame: np.ndarray) -> List[Dict]:
-        """Run YOLO detection and return filtered results."""
+    def _run_detection(self, frame: np.ndarray, frame_idx: int = 0) -> List[Dict]:
+        """Run YOLO detection and return filtered results (excluding self-player)."""
         h, w = frame.shape[:2]
         results = self.yolo(frame, verbose=False)[0]
         
@@ -640,285 +939,451 @@ class ImprovedDataPipeline:
                 'class': int(box.cls) if hasattr(box, 'cls') else 0
             })
         
+        # Apply self-player filtering
+        initial_count = len(detections)
+        detections = self.self_player_filter.update_temporal_tracking(
+            frame_idx, detections, w, h
+        )
+        filtered_count = initial_count - len(detections)
+        self.stats['self_player_filtered'] += filtered_count
+        
+        if filtered_count > 0:
+            logger.debug(f"  Filtered {filtered_count} self-player detection(s)")
+        
         # Sort by confidence
         detections.sort(key=lambda x: x['confidence'], reverse=True)
         
         # Limit detections per frame
         return detections[:MAX_DETECTIONS_PER_FRAME]
     
-    def _process_frame(self, frame: np.ndarray, video_id: str, frame_idx: int,
-                       sampler: FrameSampler) -> bool:
-        """
-        Process a single frame through the pipeline.
-        Returns True if frame was accepted, False otherwise.
-        """
+    def _evaluate_confidence(self, detections: List[Dict], frame_shape: tuple) -> Dict:
+        """Evaluate confidence tier for detections."""
+        if not detections:
+            return {'tier': 'UNCERTAIN', 'reason': 'no_detections'}
+        
+        # Get best detection
+        best_det = max(detections, key=lambda x: x['confidence'])
+        conf = best_det['confidence']
+        
+        # Check for self-player risk
+        sp_risk = self._check_self_player_risk(best_det, frame_shape)
+        
+        # Size/position heuristics
+        size_score = self._evaluate_size_position(best_det, frame_shape)
+        
+        # Combined confidence score
+        combined_score = conf * size_score * (1 - sp_risk)
+        
+        if combined_score >= 0.7 and sp_risk < 0.3:
+            return {
+                'tier': 'HIGH',
+                'detection': best_det,
+                'score': combined_score,
+                'self_player_risk': sp_risk
+            }
+        elif combined_score >= 0.3:
+            return {
+                'tier': 'UNCERTAIN',
+                'detection': best_det,
+                'score': combined_score,
+                'self_player_risk': sp_risk,
+                'reason': f'low_confidence_{sp_risk:.2f}'
+            }
+        else:
+            return {'tier': 'INVALID', 'reason': 'very_low_confidence'}
+    
+    def _check_self_player_risk(self, detection: Dict, frame_shape: tuple) -> float:
+        """Check if detection might be self-player."""
+        h, w = frame_shape[:2]
+        cx, cy = detection['center']
+        
+        # Risk factors
+        risk = 0.0
+        
+        # Center zone risk
+        if SELF_PLAYER_CENTER_ZONE_X[0] < cx/w < SELF_PLAYER_CENTER_ZONE_X[1]:
+            risk += 0.3
+        
+        # Bottom region risk
+        if cy/h > (1 - SELF_PLAYER_BOTTOM_REGION_PCT):
+            risk += 0.4
+        
+        # Size risk (self-player often larger)
+        area = detection['width'] * detection['height']
+        if area > MAX_ENEMY_AREA_RATIO * w * h * 0.8:
+            risk += 0.3
+        
+        return min(risk, 1.0)
+    
+    def _evaluate_size_position(self, detection: Dict, frame_shape: tuple) -> float:
+        """Evaluate detection based on size and position heuristics."""
+        h, w = frame_shape[:2]
+        cx, cy = detection['center']
+        area = detection['width'] * detection['height']
+        
+        score = 1.0
+        
+        # Penalize too small
+        if area < MIN_ENEMY_AREA_PX * 2:
+            score *= 0.7
+        
+        # Penalize too low on screen
+        if cy/h > MAX_BOTTOM_Y_RATIO:
+            score *= 0.6
+        
+        # Reward good center position (not too centered to avoid self-player)
+        center_dist = abs(cx/w - 0.5)
+        if 0.2 < center_dist < 0.4:
+            score *= 1.1
+        
+        return min(score, 1.0)
+    
+    def _queue_uncertain_frame(self, frame: np.ndarray, confidence_data: Dict, 
+                              video_id: str, frame_idx: int, timestamp: float):
+        """Save uncertain frame to review queue."""
+        # Create preview with overlays
+        preview = self._create_preview_image(frame, confidence_data)
+        
+        # Save preview
+        preview_path = self.output_dir / "previews" / f"uncertain_{video_id}_{frame_idx:06d}.png"
+        preview_path.parent.mkdir(exist_ok=True)
+        cv2.imwrite(str(preview_path), preview)
+        
+        # Add to queue
+        queue_item = {
+            'video_id': video_id,
+            'frame_idx': frame_idx,
+            'timestamp': timestamp,
+            'detections': confidence_data.get('detections', []),
+            'best_detection': confidence_data.get('detection', {}),
+            'confidence_score': confidence_data.get('score', 0.0),
+            'uncertainty_reason': confidence_data.get('reason', 'unknown'),
+            'preview_path': str(preview_path),
+            'frame_shape': frame.shape[:2],
+            'self_player_risk': confidence_data.get('self_player_risk', 0.0)
+        }
+        
+        self.uncertain_frames.append(queue_item)
+        logger.debug(f"  [Queue] Uncertain frame queued: {video_id}_{frame_idx:06d} ({confidence_data.get('reason', 'unknown')})")
+    
+    def _create_preview_image(self, frame: np.ndarray, confidence_data: Dict) -> np.ndarray:
+        """Create preview image with detection overlays."""
+        preview = frame.copy()
         h, w = frame.shape[:2]
         
-        # Quality check: blur
-        blur_score = self.qc.compute_blur_score(frame)
-        if blur_score < 0.3:  # Too blurry
-            self.stats['rejected'] += 1
-            return False
-        
-        # Check for duplicates
-        img_hash = self.qc.compute_phash(frame)
-        is_duplicate = False
-        for existing_hash, existing_info in self.seen_hashes.items():
-            if self.qc.hamming_distance(img_hash, existing_hash) < DUPLICATE_HASH_THRESHOLD:
-                is_duplicate = True
-                break
-        
-        if is_duplicate:
-            self.stats['skipped'] += 1
-            return False
-        
-        # Run detection
-        detections = self._run_detection(frame)
-        
-        # Determine mode based on detections
-        multiple_targets = len(detections) > 1
-        
-        if len(detections) == 0:
-            # No enemies - negative sample
-            label = LabelEntry(
-                video_id=video_id,
-                frame_index=frame_idx,
-                has_enemy=0,
-                x_center=0,
-                y_center=0,
-                width=0,
-                height=0,
-                confidence=0,
-                source_type='negative',
-                occluded=0,
-                multiple_targets=0,
-                blur_score=blur_score,
-                image_hash=img_hash
-            )
-            self._save_label(label, frame)
-            self.stats['auto_labeled'] += 1
-            return True
-        
-        elif len(detections) == 1 and detections[0]['confidence'] > HIGH_CONF_THRESHOLD:
-            # High confidence single detection - auto-label with balancing check
-            det = detections[0]
-            cx_norm = det['center'][0] / w
-            cy_norm = det['center'][1] / h
+        # Draw detections
+        detections = confidence_data.get('detections', [])
+        for i, det in enumerate(detections):
+            x1, y1, x2, y2 = det['bbox']
+            conf = det['confidence']
             
-            should_accept, priority = self.balancer.should_accept(cx_norm, cy_norm)
-            
-            if should_accept:
-                # Brief UI display for auto-labeled
-                action = self.ui.display(frame, detections, mode='auto')
-                
-                if action == 'skip':
-                    self.stats['skipped'] += 1
-                    return False
-                
-                # Create label
-                label = LabelEntry(
-                    video_id=video_id,
-                    frame_index=frame_idx,
-                    has_enemy=1,
-                    x_center=cx_norm,
-                    y_center=cy_norm,
-                    width=det['width'] / w,
-                    height=det['height'] / h,
-                    confidence=det['confidence'],
-                    source_type='auto',
-                    occluded=0,
-                    multiple_targets=0,
-                    blur_score=blur_score,
-                    image_hash=img_hash
-                )
-                self._save_label(label, frame)
-                self.stats['auto_labeled'] += 1
-                
-                # Optionally track forward
-                action = self.ui.display(frame, detections, mode='auto')
-                if action == 'track':
-                    self._track_and_propagate(frame, det, video_id, frame_idx, blur_score, img_hash)
-                
-                return True
+            # Color by confidence
+            if conf > HIGH_CONF_THRESHOLD:
+                color = (0, 255, 0)  # Green
+            elif conf > MED_CONF_THRESHOLD:
+                color = (0, 255, 255)  # Yellow
             else:
-                self.stats['skipped'] += 1
-                return False
-        
-        elif len(detections) >= 1:
-            # Medium confidence or multiple detections - human review
-            mode = 'select' if multiple_targets else 'confirm'
-            action = self.ui.display(frame, detections, mode=mode)
+                color = (0, 0, 255)  # Red
             
-            if action == 'quit':
-                raise KeyboardInterrupt("User quit")
-            elif action == 'next_video':
-                return 'next_video'
-            elif action == 'skip' or action == 'reject':
-                self.stats['skipped'] += 1
-                return False
-            elif action.startswith('select:'):
-                idx = int(action.split(':')[1])
-                det = detections[idx]
-                source_type = 'reviewed'
-                self.stats['confirmed'] += 1
-            elif action.startswith('click:'):
-                coords = action.split(':')[1]
-                cx, cy = map(int, coords.split(','))
-                # Create manual detection
-                det = {
-                    'bbox': (cx-20, cy-20, cx+20, cy+20),
-                    'center': (cx, cy),
-                    'width': 40,
-                    'height': 40,
-                    'confidence': 1.0
-                }
-                source_type = 'manual'
-                self.stats['manual'] += 1
-            elif action == 'accept':
-                det = detections[0]
-                source_type = 'reviewed'
-                self.stats['confirmed'] += 1
+            cv2.rectangle(preview, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+            cv2.putText(preview, f"{i+1}: {conf:.2f}", (int(x1), int(y1)-5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        
+        # Add uncertainty reason
+        reason = confidence_data.get('reason', 'Unknown')
+        cv2.putText(preview, f"Reason: {reason}", (10, h-10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        return preview
+    
+    def _save_high_confidence(self, frame: np.ndarray, confidence_data: Dict,
+                             video_id: str, frame_idx: int, timestamp: float):
+        """Save high-confidence frame immediately."""
+        detection = confidence_data['detection']
+        cx, cy = detection['center']
+        
+        # Save image
+        img_path = self.output_dir / "images" / f"{video_id}_{frame_idx:06d}.png"
+        cv2.imwrite(str(img_path), frame)
+        
+        # Add to labels
+        label = {
+            'filename': img_path.name,
+            'x_norm': cx / frame.shape[1],
+            'y_norm': cy / frame.shape[0],
+            'video_id': video_id,
+            'frame_idx': frame_idx,
+            'timestamp': timestamp,
+            'confidence': detection['confidence'],
+            'auto_labeled': True
+        }
+        
+        self.high_confidence_labels.append(label)
+        self.stats['auto_labeled'] += 1
+        logger.info(f"  [Auto] Saved high confidence frame: {img_path.name} (conf: {detection['confidence']:.2f})")
+    
+    def _prompt_final_decision(self) -> str:
+        """Ask user whether to review uncertain frames."""
+        print("\n" + "="*60)
+        print("Pipeline Processing Complete")
+        print("="*60)
+        print(f"High-confidence frames processed: {len(self.high_confidence_labels)}")
+        print(f"Low-confidence frames queued: {len(self.uncertain_frames)}")
+        print("\nOptions:")
+        print("1) Review low-confidence frames (y)")
+        print("2) Keep only high-confidence dataset and exit (n)")
+        print("\nYour choice: ", end="")
+        
+        while True:
+            choice = input().lower().strip()
+            if choice in ['y', 'yes', '1']:
+                return 'REVIEW'
+            elif choice in ['n', 'no', '2']:
+                return 'SKIP'
             else:
-                self.stats['skipped'] += 1
-                return False
-            
-            # Check spatial balance
-            cx_norm = det['center'][0] / w
-            cy_norm = det['center'][1] / h
-            should_accept, _ = self.balancer.should_accept(cx_norm, cy_norm)
-            
-            if not should_accept:
-                self.stats['skipped'] += 1
-                return False
-            
-            # Create and save label
-            label = LabelEntry(
-                video_id=video_id,
-                frame_index=frame_idx,
-                has_enemy=1,
-                x_center=cx_norm,
-                y_center=cy_norm,
-                width=det['width'] / w,
-                height=det['height'] / h,
-                confidence=det['confidence'],
-                source_type=source_type,
-                occluded=0,
-                multiple_targets=multiple_targets,
-                blur_score=blur_score,
-                image_hash=img_hash
-            )
-            self._save_label(label, frame)
-            
-            # Offer tracking
-            action = self.ui.display(frame, [det], mode='confirm')
-            if action == 'track':
-                self._track_and_propagate(frame, det, video_id, frame_idx, blur_score, img_hash)
-            
-            return True
-        
-        return False
+                print("Please enter 'y' to review or 'n' to skip: ", end="")
     
-    def _track_and_propagate(self, frame: np.ndarray, initial_det: Dict,
-                            video_id: str, start_frame_idx: int,
-                            blur_score: float, img_hash: str):
-        """Track enemy forward and generate labels for tracked frames."""
-        # Initialize tracker
-        tracker = ObjectTracker(self.yolo)
-        x1, y1, x2, y2 = initial_det['bbox']
-        tracker.init(frame, (int(x1), int(y1), int(x2-x1), int(y2-y1)))
+    def _review_uncertain_frames(self):
+        """Interactive review of queued uncertain frames."""
+        logger.info(f"Starting review of {len(self.uncertain_frames)} uncertain frames...")
         
-        # Note: In full implementation, would need to re-open video
-        # and seek to start_frame_idx, then read forward
-        # This is a simplified version
-        print(f"[Tracking] Would propagate from frame {start_frame_idx} for {TRACK_FRAMES} frames")
-        self.stats['tracked'] += 0  # Would increment as tracks are saved
+        for i, frame_data in enumerate(self.uncertain_frames):
+            # Load preview image
+            preview = cv2.imread(frame_data['preview_path'])
+            if preview is None:
+                logger.warning(f"Could not load preview: {frame_data['preview_path']}")
+                continue
+            
+            # Show with uncertainty info
+            action = self.ui.display_uncertain_frame(preview, frame_data, i+1, len(self.uncertain_frames))
+            
+            if action == 'accept':
+                self.confirmed_frames.append(frame_data)
+                logger.info(f"  [Review] Accepted uncertain frame: {frame_data['video_id']}_{frame_data['frame_idx']:06d}")
+            elif action == 'correct':
+                corrected = self.ui.manual_correction(preview, frame_data)
+                if corrected:
+                    self.confirmed_frames.append(corrected)
+                    logger.info(f"  [Review] Corrected frame: {frame_data['video_id']}_{frame_data['frame_idx']:06d}")
+            # 'reject' does nothing
+        
+        logger.info(f"Review complete. Confirmed {len(self.confirmed_frames)} frames.")
     
-    def process_video(self, video_path: Path, engagement_frames: List[int] = None):
-        """Process a single video through the pipeline."""
-        video_id = video_path.stem
-        cap = cv2.VideoCapture(str(video_path))
-        
-        if not cap.isOpened():
-            print(f"Error: Could not open video {video_path}")
+    def _process_confirmed_frames(self):
+        """Process user-confirmed uncertain frames."""
+        for frame_data in self.confirmed_frames:
+            # Load original frame (need to reconstruct path)
+            video_path = self.videos_dir / f"{frame_data['video_id']}.mp4"
+            cap = cv2.VideoCapture(str(video_path))
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_data['frame_idx'])
+            ret, frame = cap.read()
+            cap.release()
+            
+            if not ret:
+                continue
+            
+            # Save with corrected label
+            detection = frame_data.get('best_detection', {})
+            if detection:
+                self._save_high_confidence(frame, {'detection': detection, 'score': 1.0},
+                                           frame_data['video_id'], frame_data['frame_idx'], 
+                                           frame_data['timestamp'])
+    
+    def _process_high_confidence_batch(self):
+        """Process all high-confidence frames through augmentation."""
+        if not self.high_confidence_labels:
+            logger.info("No high-confidence frames to process")
             return
         
+        logger.info(f"Processing {len(self.high_confidence_labels)} high-confidence frames...")
+        
+        # Save labels CSV
+        labels_path = self.output_dir / "labels_enhanced.csv"
+        with open(labels_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['filename', 'x_norm', 'y_norm', 'video_id', 
+                                                  'frame_idx', 'timestamp', 'confidence', 'auto_labeled'])
+            writer.writeheader()
+            writer.writerows(self.high_confidence_labels)
+        
+        # Run augmentation if requested
+        logger.info("Running augmentation on high-confidence dataset...")
+        # TODO: Integrate with augment_dataset_improved.py
+    
+    def _export_dataset(self):
+        """Final dataset export and cleanup."""
+        logger.info("Exporting final dataset...")
+        
+        # Combine all labels
+        all_labels = self.high_confidence_labels.copy()
+        for frame_data in self.confirmed_frames:
+            detection = frame_data.get('best_detection', {})
+            if detection:
+                cx, cy = detection['center']
+                label = {
+                    'filename': f"{frame_data['video_id']}_{frame_data['frame_idx']:06d}.png",
+                    'x_norm': cx / frame_data['frame_shape'][1],
+                    'y_norm': cy / frame_data['frame_shape'][0],
+                    'video_id': frame_data['video_id'],
+                    'frame_idx': frame_data['frame_idx'],
+                    'timestamp': frame_data['timestamp'],
+                    'confidence': detection['confidence'],
+                    'auto_labeled': False
+                }
+                all_labels.append(label)
+        
+        # Save final labels
+        labels_path = self.output_dir / "labels_enhanced.csv"
+        with open(labels_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['filename', 'x_norm', 'y_norm', 'video_id', 
+                                                  'frame_idx', 'timestamp', 'confidence', 'auto_labeled'])
+            writer.writeheader()
+            writer.writerows(all_labels)
+        
+        logger.info(f"Dataset exported: {len(all_labels)} total labels")
+    
+    def _cleanup(self):
+        """Clean up temporary files."""
+        # Remove preview directory
+        preview_dir = self.output_dir / "previews"
+        if preview_dir.exists():
+            import shutil
+            shutil.rmtree(preview_dir)
+            logger.debug("Cleaned up preview directory")
+    
+    def _process_frame_automated(self, frame: np.ndarray, video_id: str, frame_idx: int,
+                                timestamp: float) -> bool:
+        """Process frame in automated mode without user interaction."""
+        # Run detection and filtering
+        detections = self._run_detection(frame, frame_idx)
+        
+        # Determine confidence tier
+        confidence_data = self._evaluate_confidence(detections, frame.shape)
+        
+        if confidence_data['tier'] == 'HIGH':
+            # Auto-accept and save immediately
+            self._save_high_confidence(frame, confidence_data, video_id, frame_idx, timestamp)
+            return True
+        elif confidence_data['tier'] == 'UNCERTAIN':
+            # Queue for later review
+            self._queue_uncertain_frame(frame, confidence_data, video_id, frame_idx, timestamp)
+            self.stats['uncertain'] += 1
+            return False
+        # 'INVALID' frames are silently discarded
+        self.stats['rejected'] += 1
+        return False
+    
+    def process_video(self, video_path: Path) -> Dict:
+        """Process entire video in automated mode."""
+        video_id = video_path.stem
+        logger.info(f"Processing video: {video_id}")
+        logger.info("=" * 60)
+        
+        cap = cv2.VideoCapture(str(video_path))
+        fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        print(f"\nProcessing video: {video_id} ({total_frames} frames)")
         
-        # Generate frame samples
+        logger.info(f"Video info: {total_frames} frames @ {fps:.1f} fps")
+        
+        # Generate sample frames
+        engagement_frames = []
+        if self.engagement_file and Path(self.engagement_file).exists():
+            with open(self.engagement_file, 'r') as f:
+                data = json.load(f)
+                engagement_frames = data.get(video_id, [])
+                
         sampler = FrameSampler(total_frames, engagement_frames)
+        n_exploration = int(total_frames * RANDOM_SAMPLE_RATE)
+        sample_frames = sampler.get_all_samples(n_exploration=n_exploration)
         
-        # Pre-scan for edge/corner frames
-        print("  Pre-scanning for off-center enemies...")
-        edge_frames = sampler.generate_edge_corner_samples(self.yolo, str(video_path), n_samples=50)
-        print(f"  Found {len(edge_frames)} edge/corner frames")
+        logger.info(f"Total frames to process: {len(sample_frames)}")
         
-        # Get all samples to process
-        all_samples = sampler.get_all_samples(n_exploration=100)
-        print(f"  Total frames to process: {len(all_samples)}")
+        # Create output directory
+        images_dir = self.output_dir / "images"
+        images_dir.mkdir(exist_ok=True)
         
         # Process frames
-        for frame_idx in tqdm(all_samples, desc=f"Processing {video_id}"):
-            # Seek to frame
+        saved_count = 0
+        for frame_idx in tqdm(sample_frames, desc=f"{video_id}"):
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
             
             if not ret:
                 continue
             
-            try:
-                result = self._process_frame(frame, video_id, frame_idx, sampler)
-                
-                if result == 'next_video':
-                    print(f"  Skipping to next video")
-                    break
-                    
-            except KeyboardInterrupt:
-                print("\nUser interrupted. Saving progress...")
-                break
+            timestamp = frame_idx / fps
+            
+            if self.auto_skip:
+                # Automated mode - no user interaction
+                if self._process_frame_automated(frame, video_id, frame_idx, timestamp):
+                    saved_count += 1
+            else:
+                # Original interactive mode
+                if self._process_frame(frame, video_id, frame_idx, sampler):
+                    saved_count += 1
         
         cap.release()
-        self.stats['processed'] += len(all_samples)
-    
-    def run(self):
-        """Run pipeline on all videos in directory."""
-        video_files = list(self.videos_dir.glob("*.mp4")) + list(self.videos_dir.glob("*.avi"))
         
-        if not video_files:
-            print(f"No video files found in {self.videos_dir}")
-            return
-        
-        print(f"Found {len(video_files)} videos to process")
-        
-        for video_path in video_files:
-            # Could load engagement timestamps from file
-            engagement_frames = None
-            self.process_video(video_path, engagement_frames)
-        
-        # Save statistics
-        self._save_stats()
-        
-        print("\n" + "="*60)
-        print("Pipeline Complete!")
-        print("="*60)
-        print(f"Stats: {self.stats}")
-        print(f"Spatial distribution: {self.balancer.get_statistics()}")
-    
-    def _save_stats(self):
-        """Save processing statistics to JSON."""
-        stats_path = self.output_dir / "collection_stats.json"
-        
-        stats_data = {
-            'processing_stats': self.stats,
-            'spatial_distribution': self.balancer.get_statistics(),
-            'total_labels': len(self.labels),
-            'timestamp': datetime.now().isoformat()
+        stats = {
+            'video_id': video_id,
+            'total_frames': total_frames,
+            'processed_frames': len(sample_frames),
+            'saved_frames': saved_count,
+            'stats': dict(self.stats)
         }
         
-        with open(stats_path, 'w') as f:
-            json.dump(stats_data, f, indent=2)
+        logger.info(f"Completed {video_id}: {saved_count}/{len(sample_frames)} frames saved")
+        return stats
+    
+    def run(self):
+        """Run the full pipeline on all videos."""
+        start_time = time.time()
         
-        print(f"[Stats] Saved to {stats_path}")
+        # Find video files
+        video_files = sorted(self.videos_dir.glob("*.mp4"))
+        if not video_files:
+            logger.error(f"No video files found in {self.videos_dir}")
+            return
+        
+        logger.info(f"Found {len(video_files)} video files")
+        
+        # Process all videos
+        all_stats = []
+        for i, video_path in enumerate(video_files, 1):
+            logger.info(f"\n[Video {i}/{len(video_files)}] Starting {video_path.name}")
+            stats = self.process_video(video_path)
+            all_stats.append(stats)
+        
+        # Final processing
+        if self.auto_skip:
+            self._process_high_confidence_batch()
+            
+            if self.review_uncertain and self.uncertain_frames:
+                choice = self._prompt_final_decision()
+                
+                if choice == 'REVIEW':
+                    self._review_uncertain_frames()
+                    self._process_confirmed_frames()
+            
+            self._export_dataset()
+            self._cleanup()
+        
+        # Print summary
+        elapsed = time.time() - start_time
+        logger.info("\n" + "="*60)
+        logger.info("PIPELINE SUMMARY")
+        logger.info("="*60)
+        logger.info(f"Total processing time: {elapsed/60:.1f} minutes")
+        logger.info(f"Videos processed: {len(video_files)}")
+        logger.info(f"High-confidence frames: {len(self.high_confidence_labels)}")
+        logger.info(f"Uncertain frames: {len(self.uncertain_frames)}")
+        logger.info(f"Confirmed frames: {len(self.confirmed_frames)}")
+        
+        if self.stats:
+            logger.info("\nFrame statistics:")
+            for key, val in self.stats.items():
+                logger.info(f"  {key}: {val}")
+        
+        logger.info("="*60)
 
 
 # ============================== COMMAND LINE ==============================
@@ -933,13 +1398,20 @@ def main():
                        help="Path to YOLO model")
     parser.add_argument("--engagement_file", type=str, default=None,
                        help="JSON file with engagement timestamps per video")
+    parser.add_argument("--auto_skip", action="store_true",
+                       help="Auto-skip low/medium confidence frames, only save high confidence")
+    parser.add_argument("--review_uncertain", action="store_true",
+                       help="At end, review frames that were auto-skipped for confirmation")
     
     args = parser.parse_args()
     
     pipeline = ImprovedDataPipeline(
         videos_dir=args.videos_dir,
         output_dir=args.output_dir,
-        yolo_model_path=args.yolo_model
+        yolo_model_path=args.yolo_model,
+        engagement_file=args.engagement_file,
+        auto_skip=args.auto_skip,
+        review_uncertain=args.review_uncertain
     )
     
     pipeline.run()

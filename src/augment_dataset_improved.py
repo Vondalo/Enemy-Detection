@@ -32,8 +32,8 @@ from tqdm import tqdm
 
 # Augmentation intensity by region
 CENTER_AUGMENTATIONS = ['brightness', 'noise']  # Only pixel-level for center
-EDGE_AUGMENTATIONS = ['brightness', 'noise', 'shift', 'zoom', 'rotate', 'flip']
-CORNER_AUGMENTATIONS = ['brightness', 'noise', 'shift', 'zoom', 'rotate', 'flip', 'perspective']
+EDGE_AUGMENTATIONS = ['brightness', 'noise', 'shift', 'zoom', 'rotate', 'flip', 'masked_pan']
+CORNER_AUGMENTATIONS = ['brightness', 'noise', 'shift', 'zoom', 'rotate', 'flip', 'perspective', 'masked_pan']
 
 # Region definitions
 CENTER_REGION = 0.30  # Within 30% of center is "center"
@@ -389,6 +389,66 @@ class Augmentations:
         
         return transformed, new_bbox.clip()
 
+    @staticmethod
+    def generate_fortnite_static_mask(h: int, w: int) -> np.ndarray:
+        """Creates a binary mask where 255 = keep static (HUD/Player), 0 = shift."""
+        mask = np.zeros((h, w), dtype=np.uint8)
+        
+        # Bottom center self-player zone
+        sp_x1, sp_x2 = int(w * 0.3), int(w * 0.7)
+        sp_y1, sp_y2 = int(h * 0.65), h
+        mask[sp_y1:sp_y2, sp_x1:sp_x2] = 255
+        
+        # Top right minimap (approximate)
+        mask[0:int(h*0.25), int(w*0.8):w] = 255
+        
+        # Bottom health/ammo
+        mask[int(h*0.85):h, 0:int(w*0.25)] = 255
+        mask[int(h*0.85):h, int(w*0.75):w] = 255
+        
+        return mask
+
+    @staticmethod
+    def augmented_masked_pan(image: np.ndarray, bbox: BBox, max_shift_pct: float = 0.3) -> Tuple[Optional[np.ndarray], Optional[BBox]]:
+        """Shifts the background layer to relocate the enemy while pinning the HUD/player mask."""
+        h, w = image.shape[:2]
+        
+        # 1. Calculate random shift (dx, dy)
+        dx = int(random.uniform(-max_shift_pct, max_shift_pct) * w)
+        dy = int(random.uniform(-max_shift_pct * 0.5, max_shift_pct * 0.5) * h)
+        
+        # 2. Extract static foreground
+        static_mask = Augmentations.generate_fortnite_static_mask(h, w)
+        foreground = cv2.bitwise_and(image, image, mask=static_mask)
+        
+        # 3. Shift the entire background with border reflection
+        M = np.float32([[1, 0, dx], [0, 1, dy]])
+        shifted_bg = cv2.warpAffine(image, M, (w, h), borderMode=cv2.BORDER_REFLECT_101)
+        
+        # 4. Remove the foreground area from the shifted background
+        bg_mask = cv2.bitwise_not(static_mask)
+        masked_bg = cv2.bitwise_and(shifted_bg, shifted_bg, mask=bg_mask)
+        
+        # 5. Composite
+        final_image = cv2.add(masked_bg, foreground)
+        
+        # 6. Update label (bbox centers are normalized 0-1)
+        new_cx = bbox.x_center + (dx / w)
+        new_cy = bbox.y_center + (dy / h)
+        
+        # Check if enemy was shifted off-screen
+        if new_cx < 0 or new_cx > 1.0 or new_cy < 0 or new_cy > 1.0:
+            return None, None
+            
+        # Check if enemy is now hidden behind the HUD/Local player mask
+        # Since pixel lookups are integers, convert normalized to pixel
+        px, py = int(new_cx * w), int(new_cy * h)
+        if 0 <= px < w and 0 <= py < h and static_mask[py, px] == 255:
+            return None, None # Masked out
+            
+        new_bbox = BBox(new_cx, new_cy, bbox.width, bbox.height)
+        return final_image, new_bbox.clip()
+
 
 # ============================== MAIN PIPELINE ==============================
 
@@ -419,10 +479,8 @@ class BiasAwareAugmentation:
         with open(self.output_csv, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
-                'filename', 'video_id', 'frame_index', 'has_enemy',
-                'x_center', 'y_center', 'width', 'height',
-                'confidence', 'source_type', 'occluded', 'multiple_targets',
-                'blur_score', 'aug_type', 'parent_file'
+                'filename', 'x_norm', 'y_norm', 'video_id', 'frame_idx',
+                'timestamp', 'confidence', 'auto_labeled', 'aug_type'
             ])
     
     def _load_labels(self) -> List[Label]:
@@ -432,28 +490,32 @@ class BiasAwareAugmentation:
         with open(self.input_csv, 'r') as f:
             reader = csv.DictReader(f)
             for row in reader:
-                bbox = None
-                if int(row['has_enemy']) == 1:
-                    bbox = BBox(
-                        x_center=float(row['x_center']),
-                        y_center=float(row['y_center']),
-                        width=float(row['width']),
-                        height=float(row['height'])
-                    )
+                # All rows in the enhanced CSV are high-confidence enemy locations
+                bbox = BBox(
+                    x_center=float(row['x_norm']),
+                    y_center=float(row['y_norm']),
+                    width=0.05,  # Dummy width for augmentation functions
+                    height=0.1   # Dummy height for augmentation functions
+                )
                 
                 label = Label(
-                    video_id=row['video_id'],
-                    frame_index=int(row['frame_index']),
-                    has_enemy=int(row['has_enemy']),
+                    video_id=row.get('video_id', 'unknown'),
+                    frame_index=int(row.get('frame_idx', 0)),
+                    has_enemy=1,
                     bbox=bbox,
-                    confidence=float(row['confidence']),
-                    source_type=row['source_type'],
-                    occluded=int(row.get('occluded', 0)),
-                    multiple_targets=int(row.get('multiple_targets', 0)),
-                    blur_score=float(row.get('blur_score', 0)),
-                    image_hash=row.get('image_hash', ''),
-                    filename=row.get('filename', f"{row['video_id']}_frame_{int(row['frame_index']):06d}.png")
+                    confidence=float(row.get('confidence', 1.0)),
+                    source_type='auto',
+                    occluded=0,
+                    multiple_targets=0,
+                    blur_score=0.0,
+                    image_hash='',
+                    filename=row['filename']
                 )
+                
+                # Store the extra original fields so we can write them back out
+                label.timestamp = float(row.get('timestamp', 0.0))
+                label.auto_labeled = row.get('auto_labeled', 'True')
+                
                 labels.append(label)
         
         return labels
@@ -480,20 +542,14 @@ class BiasAwareAugmentation:
             writer = csv.writer(f)
             writer.writerow([
                 new_filename,
-                label.video_id,
-                label.frame_index,
-                label.has_enemy,
                 f"{bbox.x_center:.6f}" if bbox else "0",
                 f"{bbox.y_center:.6f}" if bbox else "0",
-                f"{bbox.width:.6f}" if bbox else "0",
-                f"{bbox.height:.6f}" if bbox else "0",
+                label.video_id,
+                label.frame_index,
+                getattr(label, 'timestamp', 0.0),
                 f"{label.confidence:.4f}",
-                f"{label.source_type}_aug",
-                label.occluded,
-                label.multiple_targets,
-                f"{self._compute_blur(image):.2f}",
-                aug_type,
-                parent
+                getattr(label, 'auto_labeled', 'True'),
+                aug_type
             ])
         
         self.stats['total_output'] += 1
@@ -589,6 +645,12 @@ class BiasAwareAugmentation:
                 persp, new_bbox = aug.perspective_transform(image, current_bbox)
                 if new_bbox.is_valid():
                     self._save_augmented(persp, label, new_bbox, 'perspective', label.filename)
+                    count += 1
+                    
+            if 'masked_pan' in allowed and random.random() < intensity:
+                panned, new_bbox = aug.augmented_masked_pan(image, current_bbox, max_shift_pct=0.35)
+                if panned is not None and new_bbox is not None and new_bbox.is_valid():
+                    self._save_augmented(panned, label, new_bbox, 'maskedpan', label.filename)
                     count += 1
         
         return count

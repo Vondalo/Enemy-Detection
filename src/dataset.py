@@ -82,30 +82,39 @@ class EnemyDataset(Dataset):
         return image, label
 
 
-def get_dataloaders(csv_path, img_dir, batch_size=16, val_split=0.2, num_workers=0):
+def get_dataloaders(csv_path, img_dir, val_csv=None, val_dir=None, batch_size=16, val_split=0.2, num_workers=0):
     """
-    Creates train and validation DataLoaders with an 80/20 split.
+    Creates train and validation DataLoaders.
+    If val_csv/val_dir are provided, uses those for validation.
+    Otherwise, performs an 80/20 random split on the single CSV.
 
     Args:
-        csv_path:    Path to labels CSV
-        img_dir:     Path to image directory
+        csv_path:    Path to training labels CSV
+        img_dir:     Path to training image directory
+        val_csv:     (Optional) Path to validation labels CSV
+        val_dir:     (Optional) Path to validation image directory
         batch_size:  Batch size (default: 16)
-        val_split:   Fraction for validation (default: 0.2)
-        num_workers: DataLoader workers (default: 0 for Windows compatibility)
+        val_split:   Fraction for validation (default: 0.2, ignored if val_csv provided)
+        num_workers: DataLoader workers (default: 0)
 
     Returns:
         (train_loader, val_loader, dataset)
     """
-    dataset = EnemyDataset(csv_path, img_dir)
-
-    # Calculate split sizes
-    total = len(dataset)
-    val_size = int(total * val_split)
-    train_size = total - val_size
-
-    # Deterministic split for reproducibility
-    generator = torch.Generator().manual_seed(42)
-    train_dataset, val_dataset = random_split(dataset, [train_size, val_size], generator=generator)
+    if val_csv and val_dir:
+        # Use pre-split data
+        train_dataset = EnemyDataset(csv_path, img_dir)
+        val_dataset = EnemyDataset(val_csv, val_dir)
+        dataset = train_dataset # For return type consistency
+        train_size, val_size = len(train_dataset), len(val_dataset)
+    else:
+        # Perform random split
+        dataset = EnemyDataset(csv_path, img_dir)
+        total = len(dataset)
+        val_size = int(total * val_split)
+        train_size = total - val_size
+        
+        generator = torch.Generator().manual_seed(42)
+        train_dataset, val_dataset = random_split(dataset, [train_size, val_size], generator=generator)
 
     print(f"[DataLoaders] Train: {train_size} | Val: {val_size}")
 
