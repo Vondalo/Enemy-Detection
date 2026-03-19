@@ -27,6 +27,12 @@ from collections import defaultdict
 from typing import List, Dict, Set, Tuple
 import numpy as np
 
+# Ensure utf-8 output to avoid charmap encode errors on Windows
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+
 
 def load_labels_by_video(csv_path: str) -> Dict[str, List[Dict]]:
     """Load labels grouped by video_id."""

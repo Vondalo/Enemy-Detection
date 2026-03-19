@@ -1,5 +1,11 @@
 import os
 
+# Ensure utf-8 output to avoid charmap encode errors on Windows
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+
 # Definition der Ordnerstruktur
 folders = [
     "data/raw",

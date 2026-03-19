@@ -7,6 +7,12 @@ import torch
 import torch.nn as nn
 from torchvision import models
 
+# Ensure utf-8 output to avoid charmap encode errors on Windows
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+
 
 class EnemyLocalizationModel(nn.Module):
     """

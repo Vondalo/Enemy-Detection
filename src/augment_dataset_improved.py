@@ -28,6 +28,12 @@ from dataclasses import dataclass
 import argparse
 from tqdm import tqdm
 
+# Ensure utf-8 output to avoid charmap encode errors on Windows
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+
 # ============================== CONFIGURATION ==============================
 
 # Augmentation intensity by region

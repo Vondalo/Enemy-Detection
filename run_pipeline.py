@@ -18,6 +18,10 @@ import subprocess
 import argparse
 import time
 
+# Ensure utf-8 output to avoid charmap encode errors on Windows
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 def run_command(cmd, step_name):
     """Run a shell command and check for errors."""
     print(f"\n{'-'*60}")

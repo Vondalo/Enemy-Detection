@@ -59,3 +59,4 @@ models_backup_20260318_071421/evaluation/error_histogram.png
 models/loss_curve.png
 models/loss_curve.png
 /dataset
+*.pth

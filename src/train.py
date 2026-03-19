@@ -19,6 +19,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.dataset import get_dataloaders
 from src.model import EnemyLocalizationModel, count_parameters
 
+# Ensure utf-8 output to avoid charmap encode errors on Windows
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+
 # Global optimizations
 torch.backends.cudnn.benchmark = True
 

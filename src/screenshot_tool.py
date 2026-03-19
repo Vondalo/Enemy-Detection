@@ -5,6 +5,12 @@ import keyboard  # muss per pip install keyboard installiert werden
 import os
 import time
 
+# Ensure utf-8 output to avoid charmap encode errors on Windows
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+
 SAVE_PATH = "data/raw/"
 os.makedirs(SAVE_PATH, exist_ok=True)
 

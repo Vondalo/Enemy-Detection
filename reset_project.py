@@ -21,6 +21,10 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
+# Ensure utf-8 output to avoid charmap encode errors on Windows
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 
 def get_project_root() -> Path:
     """Get project root directory (parent of script location)."""

@@ -41,6 +41,12 @@ import argparse
 from tqdm import tqdm
 import time
 
+# Ensure utf-8 output to avoid charmap encode errors on Windows
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,

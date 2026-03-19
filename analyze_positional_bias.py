@@ -16,6 +16,12 @@ import argparse
 import os
 from scipy.stats import gaussian_kde
 
+# Ensure utf-8 output to avoid charmap encode errors on Windows
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+
 
 def load_coordinates(csv_path):
     """Load normalized coordinates from CSV."""

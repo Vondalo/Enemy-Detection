@@ -5,6 +5,12 @@ import numpy as np
 import argparse
 from pathlib import Path
 
+# Ensure utf-8 output to avoid charmap encode errors on Windows
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+
 def plot_spatial_distribution(csv_path, output_path):
     """Generate a 2D heatmap of enemy locations."""
     x_coords = []
