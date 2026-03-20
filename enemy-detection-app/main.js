@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import isDev from 'electron-is-dev';
 import fs from 'fs';
+import process from 'process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -214,7 +215,7 @@ ipcMain.handle('analyze-dataset-bias', async (event, datasetPath, csvName) => {
 
         const pythonProcess = spawn(pythonExe, [scriptPath, '--csv', csvPath, '--output', outputPath], {
             cwd: projectRoot,
-            env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
         });
 
         pythonProcess.on('close', (code) => {
@@ -242,7 +243,7 @@ ipcMain.handle('run-bias-fix', async (event, datasetPath, csvName) => {
         // 1. Run Cleaning
         const cleanProcess = spawn(pythonExe, [cleanScript, '--csv', inputCsv, '--img_dir', imgDir, '--output_dir', outputDir], {
             cwd: projectRoot,
-            env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
         });
 
         cleanProcess.on('close', (cleanCode) => {
@@ -251,7 +252,7 @@ ipcMain.handle('run-bias-fix', async (event, datasetPath, csvName) => {
             // 2. Run Visualization on Cleaned Data
             const vizProcess = spawn(pythonExe, [vizScript, '--csv', cleanedCsv, '--output', finalVizPath], {
                 cwd: projectRoot,
-                env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+                env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
             });
 
             vizProcess.on('close', (vizCode) => {
@@ -279,7 +280,7 @@ ipcMain.handle('run-training', async (event, datasetPath, csvName, epochs = 10) 
             '--epochs', epochs.toString()
         ], {
             cwd: projectRoot,
-            env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
         });
 
         trainProcess.stdout.on('data', (data) => {
@@ -289,6 +290,101 @@ ipcMain.handle('run-training', async (event, datasetPath, csvName, epochs = 10) 
         trainProcess.on('close', (code) => {
             if (code === 0) resolve({ success: true });
             else resolve({ error: `Training failed with code ${code}` });
+        });
+    });
+});
+
+ipcMain.handle('list-videos', async () => {
+    try {
+        const projectRoot = path.join(__dirname, '..');
+        const videosDir = path.join(projectRoot, 'src', 'videos');
+        if (!fs.existsSync(videosDir)) return [];
+
+        const files = fs.readdirSync(videosDir);
+        return files.filter(f => f.endsWith('.mp4') || f.endsWith('.mov') || f.endsWith('.avi'));
+    } catch (error) {
+        console.error("Error listing videos:", error);
+        return [];
+    }
+});
+
+ipcMain.handle('run-data-collection', async (event, videoName, datasetName) => {
+    return new Promise((resolve) => {
+        const projectRoot = path.join(__dirname, '..');
+        const pythonExe = path.join(projectRoot, '.venv', 'Scripts', 'python.exe');
+        const scriptPath = path.join(projectRoot, 'src', 'process_video_improved.py');
+        const videoPath = path.join(projectRoot, 'src', 'videos', videoName);
+        
+        // Default name if none provided
+        const finalName = datasetName || `collected_${new Date().toISOString().split('T')[0]}_${Math.floor(Math.random() * 1000)}`;
+        const outputDir = path.join(projectRoot, 'data_sets', finalName);
+
+        const child = spawn(pythonExe, [
+            scriptPath,
+            '--video_file', videoPath,
+            '--videos_dir', path.join(projectRoot, 'src', 'videos'),
+            '--output_dir', outputDir,
+            '--auto_skip'
+        ], {
+            cwd: projectRoot,
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
+        });
+
+        currentProcess = child;
+
+        child.stdout.on('data', (data) => {
+            mainWindow.webContents.send('pipeline-output', { type: 'stdout', msg: data.toString() });
+        });
+
+        child.stderr.on('data', (data) => {
+            mainWindow.webContents.send('pipeline-output', { type: 'stderr', msg: data.toString() });
+        });
+
+        child.on('close', (code) => {
+            currentProcess = null;
+            if (code === 0) resolve({ success: true });
+            else resolve({ error: `Process failed with code ${code}` });
+        });
+    });
+});
+
+ipcMain.handle('run-augmentation', async (event, datasetPath, csvName, outputDatasetName) => {
+    return new Promise((resolve) => {
+        const projectRoot = path.join(__dirname, '..');
+        const pythonExe = path.join(projectRoot, '.venv', 'Scripts', 'python.exe');
+        const scriptPath = path.join(projectRoot, 'src', 'augment_dataset_improved.py');
+        
+        const inputCsv = path.join(datasetPath, csvName);
+        const inputDir = path.join(datasetPath, 'images');
+        
+        // Default name if none provided
+        const finalName = outputDatasetName || `${path.basename(datasetPath)}_augmented`;
+        const outputDir = path.join(projectRoot, 'data_sets', finalName);
+
+        const child = spawn(pythonExe, [
+            scriptPath,
+            '--input_csv', inputCsv,
+            '--input_dir', inputDir,
+            '--output_dir', outputDir
+        ], {
+            cwd: projectRoot,
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
+        });
+
+        currentProcess = child;
+
+        child.stdout.on('data', (data) => {
+            mainWindow.webContents.send('pipeline-output', { type: 'stdout', msg: data.toString() });
+        });
+
+        child.stderr.on('data', (data) => {
+            mainWindow.webContents.send('pipeline-output', { type: 'stderr', msg: data.toString() });
+        });
+
+        child.on('close', (code) => {
+            currentProcess = null;
+            if (code === 0) resolve({ success: true, outputDir });
+            else resolve({ error: `Augmentation failed with code ${code}` });
         });
     });
 });

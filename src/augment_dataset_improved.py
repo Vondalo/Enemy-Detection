@@ -28,10 +28,12 @@ from dataclasses import dataclass
 import argparse
 from tqdm import tqdm
 
-# Ensure utf-8 output to avoid charmap encode errors on Windows
+# Ensure utf-8 output and unbuffered printing to avoid charmap encode errors and log delays
 import sys
+import functools
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
+print = functools.partial(print, flush=True)
 
 
 # ============================== CONFIGURATION ==============================

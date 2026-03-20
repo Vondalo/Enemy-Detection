@@ -14,5 +14,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listDatasets: () => ipcRenderer.invoke('list-datasets'),
   analyzeDatasetBias: (datasetPath, csvName) => ipcRenderer.invoke('analyze-dataset-bias', datasetPath, csvName),
   runBiasFix: (datasetPath, csvName) => ipcRenderer.invoke('run-bias-fix', datasetPath, csvName),
-  runTraining: (datasetPath, csvName, epochs) => ipcRenderer.invoke('run-training', datasetPath, csvName, epochs)
+  runTraining: (datasetPath, csvName, epochs) => ipcRenderer.invoke('run-training', datasetPath, csvName, epochs),
+  listVideos: () => ipcRenderer.invoke('list-videos'),
+  runDataCollection: (videoName, datasetName) => ipcRenderer.invoke('run-data-collection', videoName, datasetName),
+  runAugmentation: (datasetPath, csvName, outputDatasetName) => ipcRenderer.invoke('run-augmentation', datasetPath, csvName, outputDatasetName)
 });

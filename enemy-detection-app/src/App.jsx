@@ -9,14 +9,6 @@ const Presentation = () => {
     const [videoLinks, setVideoLinks] = useState('');
     const logsEndRef = useRef(null);
 
-    const handleDownloadStep = async () => {
-        if (isRunning) return;
-        if (videoLinks.trim()) {
-            await window.electronAPI.saveLinks(videoLinks);
-        }
-        handleRunStep('download_videos.py', []);
-    };
-
     // Predictor State
     const [imagePath, setImagePath] = useState(null);
     const [prediction, setPrediction] = useState(null);
@@ -25,12 +17,47 @@ const Presentation = () => {
     const imgRef = useRef(null);
     const [imgDims, setImgDims] = useState({ width: 0, height: 0 });
 
+    // Dataset Manager State
+    const [datasets, setDatasets] = useState([]);
+    const [selectedDataset, setSelectedDataset] = useState(null);
+    const [selectedCsv, setSelectedCsv] = useState('');
+    const [beforeImage, setBeforeImage] = useState(null);
+    const [afterImage, setAfterImage] = useState(null);
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [isFixing, setIsFixing] = useState(false);
+    const [trainEpochs, setTrainEpochs] = useState(10);
+
+    // Data Collector State
+    const [videos, setVideos] = useState([]);
+    const [selectedVideo, setSelectedVideo] = useState('');
+    const [collectionName, setCollectionName] = useState('');
+    const [augmentationName, setAugmentationName] = useState('');
+
+    const handleFetchDatasets = async () => {
+        const data = await window.electronAPI.listDatasets();
+        setDatasets(data);
+        if (data.length > 0 && !selectedDataset) {
+            setSelectedDataset(data[0]);
+            setSelectedCsv(data[0].csvs[0]);
+        }
+    };
+
+    const handleFetchVideos = async () => {
+        const data = await window.electronAPI.listVideos();
+        setVideos(data);
+        if (data.length > 0 && !selectedVideo) {
+            setSelectedVideo(data[0]);
+        }
+    };
+
     useEffect(() => {
         if (window.electronAPI?.onPipelineOutput) {
             window.electronAPI.onPipelineOutput((data) => {
                 setLogs(prev => [...prev, data.msg]);
             });
         }
+        handleFetchDatasets();
+        handleFetchVideos();
         return () => {
             if (window.electronAPI?.removePipelineOutputListener) {
                 window.electronAPI.removePipelineOutputListener();
@@ -60,6 +87,44 @@ const Presentation = () => {
         } finally {
             setIsRunning(false);
         }
+    };
+
+    const handleDownloadStep = async () => {
+        if (isRunning) return;
+        if (videoLinks.trim()) {
+            await window.electronAPI.saveLinks(videoLinks);
+        }
+        handleRunStep('download_videos.py', []);
+    };
+
+    const handleRunDataCollection = async (videoName) => {
+        if (!videoName || isRunning) return;
+        setIsRunning(true);
+        const finalName = collectionName.trim() || `collected_${new Date().toISOString().split('T')[0]}`;
+        setLogs([`> Starting data collection for video: ${videoName}...`, `> Dataset Name: ${finalName}`, `> Mode: Automated (Auto-Skip Low Confidence)`]);
+        const result = await window.electronAPI.runDataCollection(videoName, finalName);
+        if (result.success) {
+            setLogs(prev => [...prev, `\n[Success] Data collection complete! Frames saved to data_sets/${finalName}`, `[System] You can now analyze this in the Dataset Manager.`]);
+            handleFetchDatasets();
+        } else {
+            setLogs(prev => [...prev, `\n[Error] ${result.error}`]);
+        }
+        setIsRunning(false);
+    };
+
+    const handleRunAugmentation = async () => {
+        if (!selectedDataset || !selectedCsv || isRunning) return;
+        setIsRunning(true);
+        const finalName = augmentationName.trim() || `${selectedDataset.name}_augmented`;
+        setLogs([`> Starting data augmentation for ${selectedDataset.name}...`, `> Source CSV: ${selectedCsv}`, `> Output Name: ${finalName}`]);
+        const result = await window.electronAPI.runAugmentation(selectedDataset.path, selectedCsv, finalName);
+        if (result.success) {
+            setLogs(prev => [...prev, `\n[Success] Augmentation complete!`, `[System] Augmented dataset saved to data_sets/${finalName}`]);
+            handleFetchDatasets();
+        } else {
+            setLogs(prev => [...prev, `\n[Error] ${result.error}`]);
+        }
+        setIsRunning(false);
     };
 
     const handleCancel = async () => {
@@ -104,6 +169,48 @@ const Presentation = () => {
         } finally {
             setPredicting(false);
         }
+    };
+
+    const handleAnalyzeBias = async () => {
+        if (!selectedDataset || !selectedCsv) return;
+        setIsAnalyzing(true);
+        setLogs([`> Analyzing bias for ${selectedDataset.name}...`]);
+        const result = await window.electronAPI.analyzeDatasetBias(selectedDataset.path, selectedCsv);
+        if (result.success) {
+            setBeforeImage(result.imagePath);
+            setLogs(prev => [...prev, `[Success] Before-fix visualization generated.`]);
+        } else {
+            setLogs(prev => [...prev, `[Error] ${result.error}`]);
+        }
+        setIsAnalyzing(false);
+    };
+
+    const handleRunFix = async () => {
+        if (!selectedDataset || !selectedCsv) return;
+        setIsFixing(true);
+        setLogs([`> Applying anti-bias fix and rebalancing to ${selectedDataset.name}...`]);
+        const result = await window.electronAPI.runBiasFix(selectedDataset.path, selectedCsv);
+        if (result.success) {
+            setAfterImage(result.imagePath);
+            setLogs(prev => [...prev, `[Success] Anti-bias fix applied. Balanced dataset created.`, `[System] Result saved to: ${result.csvPath}`]);
+            handleFetchDatasets();
+        } else {
+            setLogs(prev => [...prev, `[Error] ${result.error}`]);
+        }
+        setIsFixing(false);
+    };
+
+    const handleTrainOnDataset = async () => {
+        if (!selectedDataset || !selectedCsv) return;
+        setIsRunning(true);
+        setLogs([`> Starting training on dataset: ${selectedDataset.name}`, `> CSV: ${selectedCsv}`, `> Epochs: ${trainEpochs}`]);
+        const result = await window.electronAPI.runTraining(selectedDataset.path, selectedCsv, trainEpochs);
+        if (result.success) {
+            setLogs(prev => [...prev, `\n[Success] Training completed successfully!`]);
+        } else {
+            setLogs(prev => [...prev, `\n[Error] ${result.error}`]);
+        }
+        setIsRunning(false);
     };
 
     const updateImageDims = () => {
@@ -155,40 +262,158 @@ const Presentation = () => {
     const slides = [
         {
             id: 'download',
-            title: "Video Downloader",
-            subtitle: "Fetch raw YouTube footage",
-            icon: <CloudDownload size={24} />,
+            title: "Downloader",
+            subtitle: "Gather gameplay",
+            icon: <CloudDownload size={22} />,
             content: (
                 <div className="flex flex-col h-full space-y-6">
                     <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 flex flex-col gap-4">
-                        <div>
-                            <h3 className="text-xl font-bold text-sky-400 mb-1">download_videos.py</h3>
-                            <p className="text-slate-300 text-sm leading-relaxed">
-                                Paste YouTube URLs below (one per line). The downloader will intelligently skip videos that already exist.
-                            </p>
-                        </div>
                         <textarea
                             value={videoLinks}
                             onChange={(e) => setVideoLinks(e.target.value)}
-                            placeholder="https://youtube.com/watch?v=..."
-                            className="w-full h-32 bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm text-slate-300 font-mono focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-colors resize-none"
+                            placeholder="Enter YouTube links..."
+                            className="w-full h-32 bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm text-slate-300 font-mono focus:outline-none focus:border-sky-500 transition-colors resize-none"
                         />
-                        <div className="flex gap-2">
+                        <button 
+                            onClick={handleDownloadStep}
+                            disabled={isRunning || !videoLinks.trim()}
+                            className="px-6 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-lg transition text-white font-bold"
+                        >Start Download</button>
+                    </div>
+                </div>
+            )
+        },
+        {
+            id: 'collector',
+            title: "Data Collector",
+            subtitle: "Select and process gameplay videos",
+            icon: <MonitorPlay size={24} />,
+            content: (
+                <div className="flex flex-col h-full space-y-6">
+                    <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 flex flex-col gap-6">
+                        <div className="flex flex-col gap-2">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Video Source</label>
+                            <div className="flex gap-4">
+                                <select 
+                                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                    value={selectedVideo}
+                                    onChange={(e) => setSelectedVideo(e.target.value)}
+                                >
+                                    {videos.length === 0 && <option>No videos found in src/videos</option>}
+                                    {videos.map(v => <option key={v} value={v}>{v}</option>)}
+                                </select>
+                                <button 
+                                    onClick={handleFetchVideos}
+                                    className="p-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg transition"
+                                    title="Refresh List"
+                                >
+                                    <CloudDownload size={20} />
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-2">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">New Dataset Name</label>
+                            <input 
+                                type="text"
+                                placeholder="e.g. desert_outpost_labels"
+                                className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                value={collectionName}
+                                onChange={(e) => setCollectionName(e.target.value)}
+                            />
+                        </div>
+
+                        <button 
+                            onClick={() => handleRunDataCollection(selectedVideo)}
+                            disabled={isRunning || !selectedVideo}
+                            className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-blue-900/20 text-sm font-bold flex justify-center items-center gap-2"
+                        >
+                            Start Data Collection <MonitorPlay size={18}/>
+                        </button>
+                    </div>
+                    {renderTerminal()}
+                </div>
+            )
+        },
+        {
+            id: 'datasets',
+            title: "Dataset Manager",
+            subtitle: "Analyze and neutralize positional bias",
+            icon: <Database size={24} />,
+            content: (
+                <div className="flex flex-col h-full space-y-6">
+                    <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 flex flex-col gap-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="flex flex-col gap-2">
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Dataset</label>
+                                <select 
+                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                    value={selectedDataset?.name || ''}
+                                    onChange={(e) => {
+                                        const ds = datasets.find(d => d.name === e.target.value);
+                                        setSelectedDataset(ds);
+                                        setSelectedCsv(ds?.csvs[0] || '');
+                                        setBeforeImage(null);
+                                        setAfterImage(null);
+                                    }}
+                                >
+                                    {datasets.map(ds => <option key={ds.name} value={ds.name}>{ds.name}</option>)}
+                                </select>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">CSV Labels</label>
+                                <select 
+                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                    value={selectedCsv}
+                                    onChange={(e) => setSelectedCsv(e.target.value)}
+                                >
+                                    {selectedDataset?.csvs.map(csv => <option key={csv} value={csv}>{csv}</option>)}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-4">
                             <button 
-                                onClick={handleDownloadStep}
-                                disabled={isRunning || !videoLinks.trim()}
-                                className="flex-1 px-6 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-sky-900/20 text-sm font-bold"
-                            >Start Video Downloader</button>
-                            <button
-                                onClick={async () => {
-                                    if (window.confirm("Are you sure you want to delete all downloaded videos?")) {
-                                        await window.electronAPI.clearVideos();
-                                        setLogs(prev => [...prev, "\n[System] Videos cleared successfully!"]);
-                                    }
-                                }}
-                                disabled={isRunning}
-                                className="px-6 py-2 bg-red-600/10 hover:bg-red-600/30 text-red-500 font-bold rounded-lg transition text-sm border border-red-500/30"
-                            >Delete Videos</button>
+                                onClick={handleAnalyzeBias}
+                                disabled={isAnalyzing || !selectedDataset}
+                                className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded-lg transition font-bold text-sm flex items-center justify-center gap-2"
+                            >
+                                {isAnalyzing ? 'Analyzing...' : 'Analyze Bias (Before)'}
+                                <BarChart3 size={18} />
+                            </button>
+                            <button 
+                                onClick={handleRunFix}
+                                disabled={isFixing || !selectedDataset}
+                                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition font-bold text-sm text-white flex items-center justify-center gap-2 shadow-lg shadow-blue-900/20"
+                            >
+                                {isFixing ? 'Cleaning...' : 'Apply Anti-Bias Fix (After)'}
+                                <BrainCircuit size={18} />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1 min-h-[350px]">
+                        <div className="bg-slate-900/50 rounded-xl border border-slate-800 flex flex-col items-center justify-center p-4 relative overflow-hidden group">
+                            <div className="absolute top-4 left-4 z-10 bg-slate-800/80 backdrop-blur px-3 py-1 rounded text-[10px] font-black uppercase tracking-widest text-slate-400 border border-slate-700">Original Bias</div>
+                            {beforeImage ? (
+                                <img src={`file://${beforeImage}?t=${new Date().getTime()}`} className="max-w-full max-h-full object-contain rounded shadow-2xl" alt="Before" />
+                            ) : (
+                                <div className="text-slate-600 flex flex-col items-center gap-2">
+                                    <BarChart3 size={32} className="opacity-20" />
+                                    <span className="text-xs italic">Run analysis to see distribution</span>
+                                </div>
+                            )}
+                        </div>
+                        <div className="bg-slate-900/50 rounded-xl border border-slate-800 flex flex-col items-center justify-center p-4 relative overflow-hidden group">
+                            <div className="absolute top-4 left-4 z-10 bg-blue-600/80 backdrop-blur px-3 py-1 rounded text-[10px] font-black uppercase tracking-widest text-white border border-blue-400/30">Neutralized & Balanced</div>
+                            {afterImage ? (
+                                <img src={`file://${afterImage}?t=${new Date().getTime()}`} className="max-w-full max-h-full object-contain rounded shadow-2xl" alt="After" />
+                            ) : (
+                                <div className="text-slate-600 flex flex-col items-center gap-2">
+                                    <CheckCircle size={32} className="opacity-20" />
+                                    <span className="text-xs italic">Apply fix to see results</span>
+                                </div>
+                            )}
                         </div>
                     </div>
                     {renderTerminal()}
@@ -196,9 +421,119 @@ const Presentation = () => {
             )
         },
         {
+            id: 'augmenter',
+            title: "Dataset Augmenter",
+            subtitle: "Boost dataset with spatial variations",
+            icon: <Layers size={24} />,
+            content: (
+                <div className="flex flex-col h-full space-y-6">
+                    <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 flex flex-col gap-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="flex flex-col gap-2">
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Source Dataset</label>
+                                <select 
+                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                    value={selectedDataset?.name || ''}
+                                    onChange={(e) => {
+                                        const ds = datasets.find(d => d.name === e.target.value);
+                                        setSelectedDataset(ds);
+                                        setSelectedCsv(ds?.csvs[0] || '');
+                                    }}
+                                >
+                                    {datasets.map(ds => <option key={ds.name} value={ds.name}>{ds.name}</option>)}
+                                </select>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Source CSV</label>
+                                <select 
+                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                    value={selectedCsv}
+                                    onChange={(e) => setSelectedCsv(e.target.value)}
+                                >
+                                    {selectedDataset?.csvs.map(csv => <option key={csv} value={csv}>{csv}</option>)}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-2">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Augmented Dataset Name</label>
+                            <input 
+                                type="text"
+                                placeholder="e.g. combined_augmented_v1"
+                                className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                                value={augmentationName}
+                                onChange={(e) => setAugmentationName(e.target.value)}
+                            />
+                        </div>
+
+                        <div className="bg-blue-900/20 border border-blue-800/50 p-4 rounded-lg">
+                            <h4 className="text-blue-400 text-xs font-bold uppercase tracking-widest mb-2">Augmentation Strategy</h4>
+                            <ul className="text-xs text-slate-400 space-y-1">
+                                <li>• Spatially-aware augmentation (Edges/Corners priority)</li>
+                                <li>• Automatic coordinate transformation for rotates/flips</li>
+                                <li>• HUD-aware "Masked Pan" relocation</li>
+                                <li>• Pixel-level noise, blur and brightness shifts</li>
+                            </ul>
+                        </div>
+
+                        <button 
+                            onClick={handleRunAugmentation}
+                            disabled={isRunning || !selectedDataset}
+                            className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-indigo-900/20 text-sm font-bold flex justify-center items-center gap-2"
+                        >
+                            Run Augmentation Pipeline <Layers size={18}/>
+                        </button>
+                    </div>
+                    {renderTerminal()}
+                </div>
+            )
+        },
+        {
+            id: 'train',
+            title: "Model Training",
+            subtitle: "Train on selected dataset",
+            icon: <BrainCircuit size={24} />,
+            content: (
+                <div className="flex flex-col h-full space-y-6">
+                    <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 flex flex-col gap-6">
+                        <div className="flex flex-col gap-4">
+                            <div className="flex items-center gap-4 text-sm">
+                                <span className="text-rose-400 font-bold whitespace-nowrap">Training Source:</span>
+                                <div className="flex-1 px-3 py-1.5 bg-slate-900 rounded border border-slate-700 text-slate-300 font-mono text-xs overflow-hidden text-ellipsis italic">
+                                    {selectedDataset ? `${selectedDataset.name} -> ${selectedCsv}` : "None Selected (Go to Dataset Manager)"}
+                                </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-6">
+                                <div className="flex flex-col gap-1.5 flex-1">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Epochs Count</label>
+                                    <input 
+                                        type="number" 
+                                        value={trainEpochs} 
+                                        onChange={(e) => setTrainEpochs(parseInt(e.target.value))}
+                                        className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-1.5 flex-1 opacity-50">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Batch Size</label>
+                                    <input type="number" value="16" readOnly className="bg-slate-950 border border-slate-800 rounded-lg p-2 text-sm text-slate-500 cursor-not-allowed" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <button 
+                            onClick={handleTrainOnDataset}
+                            disabled={isRunning || !selectedDataset}
+                            className="px-6 py-3 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-rose-900/20 text-sm font-bold w-full flex justify-center items-center gap-2"
+                        >Start Training <BrainCircuit size={18}/></button>
+                    </div>
+                </div>
+            )
+        },
+        {
             id: 'tester',
             title: "Model Tester",
-            subtitle: "Test current ONNX locally",
+            subtitle: "Verify predictions",
             icon: <ScanEye size={24} />,
             content: (
                 <div className="flex flex-col h-full space-y-6">
@@ -226,7 +561,7 @@ const Presentation = () => {
                                 <img 
                                     src={`file://${imagePath}`} 
                                     alt="Input" 
-                                    className="max-w-full max-h-[50vh] object-contain block filter brightness-110 contrast-125 saturate-150 rounded" 
+                                    className="max-w-full max-h-[45vh] object-contain block filter brightness-110 contrast-125 saturate-150 rounded" 
                                 />
                                 {prediction && (
                                     <div 
@@ -238,12 +573,6 @@ const Presentation = () => {
                                         <div className="absolute top-1/2 left-1/2 w-[1px] h-full bg-red-500/50 -translate-x-1/2 -translate-y-1/2"></div>
                                     </div>
                                 )}
-                                {truth && (
-                                    <div 
-                                        className="absolute w-3 h-3 bg-emerald-500 rounded-full shadow-[0_0_15px_#10b981] z-10 transition-all duration-500 pointer-events-none"
-                                        style={{ left: `${truth[0] * 100}%`, top: `${truth[1] * 100}%`, transform: 'translate(-50%, -50%)' }}
-                                    />
-                                )}
                             </div>
                         </div>
                     )}
@@ -252,153 +581,16 @@ const Presentation = () => {
             )
         },
         {
-            id: 'collect',
-            title: "Data Collection",
-            subtitle: "Extract screens from raw gameplay",
-            icon: <MonitorPlay size={24} />,
-            content: (
-                <div className="flex flex-col h-full space-y-6">
-                    <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700">
-                        <h3 className="text-xl font-bold text-blue-400 mb-2">process_video_improved.py</h3>
-                        <p className="text-slate-300 leading-relaxed mb-6">
-                            Runs object tracking and saves raw screenshots to dataset/labeled alongside initial coordinate data.
-                        </p>
-                        <button 
-                            onClick={() => handleRunStep('process_video_improved.py', ['--videos_dir', 'src/videos', '--output_dir', 'dataset/labeled', '--auto_skip'])}
-                            disabled={isRunning}
-                            className="px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg text-sm font-bold w-full"
-                        >Start Collection Pipeline (Auto-Skip)</button>
-                    </div>
-                    {renderTerminal()}
-                </div>
-            )
-        },
-        {
-            id: 'augment',
-            title: "Augmentation",
-            subtitle: "Expand dataset and fix biases",
-            icon: <Layers size={24} />,
-            content: (
-                <div className="flex flex-col h-full space-y-6">
-                    <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700">
-                        <h3 className="text-xl font-bold text-emerald-400 mb-2">augment_dataset_improved.py</h3>
-                        <p className="text-slate-300 leading-relaxed mb-6">
-                            Applies random augmentations (flips, translations) to dramatically multiply the available training data and smooth distribution.
-                        </p>
-                        <button 
-                            onClick={() => handleRunStep('augment_dataset_improved.py', ['--input_csv', 'dataset/labeled/labels_enhanced.csv', '--input_dir', 'dataset/labeled/images', '--output_dir', 'dataset/augmented'])}
-                            disabled={isRunning}
-                            className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg text-sm font-bold w-full"
-                        >Process Data Augmentation</button>
-                    </div>
-                    {renderTerminal()}
-                </div>
-            )
-        },
-        {
-            id: 'split',
-            title: "Split & Analyze",
-            subtitle: "Train/Val Separation & Visualizing",
-            icon: <BarChart3 size={24} />,
-            content: (
-                <div className="flex flex-col h-full space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700">
-                            <h3 className="text-lg font-bold text-yellow-500 mb-2">visualize_dataset.py</h3>
-                            <button 
-                                onClick={() => handleRunStep('visualize_dataset.py', ['--csv', 'dataset/augmented/augmented_labels.csv', '--output', 'dataset/augmented/center_bias_heatmap.png'])}
-                                disabled={isRunning}
-                                className="px-4 py-2 bg-yellow-600/20 text-yellow-500 hover:bg-yellow-600/30 border border-yellow-600/50 disabled:opacity-50 rounded-lg transition text-sm font-bold w-full"
-                            >Generate Bias Heatmap</button>
-                        </div>
-                        <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700">
-                            <h3 className="text-lg font-bold text-purple-400 mb-2">split_dataset.py</h3>
-                            <button 
-                                onClick={() => handleRunStep('split_dataset.py', ['--csv', 'dataset/augmented/augmented_labels.csv', '--img_dir', 'dataset/augmented/images', '--output_dir', 'dataset/final', '--val_ratio', '0.2', '--stratified'])}
-                                disabled={isRunning}
-                                className="px-4 py-2 bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 border border-purple-600/50 disabled:opacity-50 rounded-lg transition text-sm font-bold w-full"
-                            >Run Stratified Split</button>
-                        </div>
-                    </div>
-                    {renderTerminal()}
-                </div>
-            )
-        },
-        {
-            id: 'train',
-            title: "Training",
-            subtitle: "Build the ResNet CNN",
-            icon: <BrainCircuit size={24} />,
-            content: (
-                <div className="flex flex-col h-full space-y-6">
-                    <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700">
-                        <h3 className="text-xl font-bold text-rose-500 mb-2">train.py</h3>
-                        <p className="text-slate-300 leading-relaxed mb-6">
-                            Run PyTorch to train the architecture using MobileNet/ResNet backbone with MSE loss optimized by Adam.
-                        </p>
-                        <button 
-                            onClick={() => handleRunStep('train.py', [
-                                '--train_csv', 'src/fn-dataset/train/labels.csv', 
-                                '--train_dir', 'src/fn-dataset/train/images', 
-                                '--val_csv', 'src/fn-dataset/valid/labels.csv', 
-                                '--val_dir', 'src/fn-dataset/valid/images',
-                                '--epochs', '30', '--batch_size', '16', '--lr', '1e-4'
-                            ])}
-                            disabled={isRunning}
-                            className="px-6 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg text-sm font-bold w-full flex justify-center items-center gap-2"
-                        >Start Model Training <BrainCircuit size={18}/></button>
-                    </div>
-                    {renderTerminal()}
-                </div>
-            )
-        },
-        {
-            id: 'pipeline',
-            title: "Full Pipeline",
-            subtitle: "One-Click Automation",
-            icon: <Terminal size={24} />,
-            content: (
-                <div className="flex flex-col h-full space-y-6">
-                    <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 bg-[linear-gradient(45deg,transparent_25%,rgba(59,130,246,0.05)_50%,transparent_75%,transparent_100%)] bg-[length:20px_20px]">
-                        <h3 className="text-xl font-bold text-white mb-2 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">run_pipeline.py</h3>
-                        <p className="text-slate-300 leading-relaxed mb-6">
-                            Execute the entire E2E engine. This script triggers every stage automatically.
-                        </p>
-                        <button 
-                            onClick={() => handleRunStep('run_pipeline.py', ['--videos_dir', 'src/videos', '--auto_skip', '--epochs', '30'])}
-                            disabled={isRunning}
-                            className="px-6 py-2 bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 disabled:opacity-50 rounded-lg transition text-white shadow-xl shadow-blue-900/20 text-sm font-bold w-full"
-                        >Execute Master Pipeline</button>
-                    </div>
-                    {renderTerminal()}
-                </div>
-            )
-        },
-        {
             id: 'reset',
-            title: "Factory Reset",
-            subtitle: "Wipe models and data",
-            icon: <Trash2 size={24} />,
+            title: "Reset",
+            subtitle: "Wipe all data",
+            icon: <Trash2 size={22} />,
             content: (
-                <div className="flex flex-col h-full space-y-6">
-                    <div className="bg-red-900/10 p-6 rounded-xl border border-red-700/50 flex flex-col gap-4">
-                        <div>
-                            <h3 className="text-xl font-bold text-red-500 mb-1">DANGER ZONE</h3>
-                            <p className="text-red-300/80 text-sm leading-relaxed">
-                                This will run <code>reset_project.py</code> to clear your dataset, models, and caches. By default, timestamped backups will be created.
-                            </p>
-                        </div>
-                        <button 
-                            onClick={() => {
-                                if (window.confirm("Are you absolutely sure you want to reset the project data?")) {
-                                    handleRunStep('reset_project.py', ['--all', '--yes']);
-                                }
-                            }}
-                            disabled={isRunning}
-                            className="px-6 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-red-900/20 text-sm font-bold w-full uppercase tracking-wider"
-                        >Execute Project Reset</button>
-                    </div>
-                    {renderTerminal()}
+                <div className="bg-red-900/10 p-6 rounded-xl border border-red-700/50 flex flex-col gap-4">
+                    <button 
+                        onClick={() => window.confirm("Reset everything?") && handleRunStep('reset_project.py', ['--all', '--yes'])}
+                        className="px-6 py-2 bg-red-600 hover:bg-red-500 rounded-lg transition text-white font-bold"
+                    >FACTORY RESET</button>
                 </div>
             )
         }

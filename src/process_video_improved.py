@@ -47,13 +47,18 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
 
-# Setup logging
+# Setup logging to stdout for better visibility in Electron
 logging.basicConfig(
     level=logging.INFO,
     format='[%(asctime)s] %(levelname)s: %(message)s',
-    datefmt='%H:%M:%S'
+    datefmt='%H:%M:%S',
+    stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
+
+# Force flush all prints
+import functools
+print = functools.partial(print, flush=True)
 
 try:
     from ultralytics import YOLO
@@ -824,9 +829,11 @@ class ImprovedDataPipeline:
     """Main data collection pipeline integrating all components."""
     
     def __init__(self, videos_dir: str, output_dir: str, yolo_model_path: str = "yolov8n.pt",
-                 engagement_file: str = None, auto_skip: bool = False, review_uncertain: bool = False):
+                 engagement_file: str = None, auto_skip: bool = False, review_uncertain: bool = False,
+                 video_file: str = None):
         self.engagement_file = engagement_file
         self.videos_dir = Path(videos_dir)
+        self.video_file = Path(video_file) if video_file else None
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -842,16 +849,21 @@ class ImprovedDataPipeline:
         self.yolo = YOLO(yolo_model_path)
         self.balancer = SpatialBalancer()
         self.qc = QualityControl()
-        self.ui = ReviewInterface()
         self.self_player_filter = SelfPlayerFilter()
         
         # Storage
         self.labels = []
         self.seen_hashes = {}  # hash -> frame info
         
-        # Live Preview Heatmap
-        self.live_preview = np.zeros((720, 1280, 3), dtype=np.uint8)
-        cv2.namedWindow("Live Detection Map", cv2.WINDOW_NORMAL)
+        # Only initialize UI if not in automated mode
+        if not self.auto_skip:
+            self.ui = ReviewInterface()
+            # Live Preview Heatmap
+            self.live_preview = np.zeros((720, 1280, 3), dtype=np.uint8)
+            cv2.namedWindow("Live Detection Map", cv2.WINDOW_NORMAL)
+        else:
+            self.ui = None
+            self.live_preview = None
         
         # CSV setup
         self.csv_path = self.output_dir / "labels_enhanced.csv"
@@ -1120,12 +1132,13 @@ class ImprovedDataPipeline:
             writer = csv.DictWriter(f, fieldnames=list(label.keys()))
             writer.writerow(label)
             
-        # Update live preview window mask
-        vx = int((cx / frame.shape[1]) * 1280)
-        vy = int((cy / frame.shape[0]) * 720)
-        cv2.circle(self.live_preview, (vx, vy), 3, (0, 0, 255), -1)
-        cv2.imshow("Live Detection Map", self.live_preview)
-        cv2.waitKey(1)
+        # Update live preview window mask if enabled
+        if self.live_preview is not None:
+            vx = int((cx / frame.shape[1]) * 1280)
+            vy = int((cy / frame.shape[0]) * 720)
+            cv2.circle(self.live_preview, (vx, vy), 3, (0, 0, 255), -1)
+            cv2.imshow("Live Detection Map", self.live_preview)
+            cv2.waitKey(1)
         
         logger.info(f"  [Auto] Saved high confidence frame: {img_path.name} (conf: {detection['confidence']:.2f})")
     
@@ -1357,12 +1370,18 @@ class ImprovedDataPipeline:
         start_time = time.time()
         
         # Find video files
-        video_files = sorted(self.videos_dir.glob("*.mp4"))
-        if not video_files:
-            logger.error(f"No video files found in {self.videos_dir}")
-            return
+        if self.video_file:
+            video_files = [self.video_file]
+            if not self.video_file.exists():
+                logger.error(f"Video file not found: {self.video_file}")
+                return
+        else:
+            video_files = sorted(self.videos_dir.glob("*.mp4"))
+            if not video_files:
+                logger.error(f"No video files found in {self.videos_dir}")
+                return
         
-        logger.info(f"Found {len(video_files)} video files")
+        logger.info(f"Processing {len(video_files)} video(s)")
         
         # Process all videos
         all_stats = []
@@ -1407,6 +1426,7 @@ class ImprovedDataPipeline:
 # ============================== COMMAND LINE ==============================
 
 def main():
+    print("Initializing Data Collection Script...", flush=True)
     parser = argparse.ArgumentParser(description="Improved Data Collection Pipeline")
     parser.add_argument("--videos_dir", type=str, required=True,
                        help="Directory containing input videos")
@@ -1416,6 +1436,8 @@ def main():
                        help="Path to YOLO model")
     parser.add_argument("--engagement_file", type=str, default=None,
                        help="JSON file with engagement timestamps per video")
+    parser.add_argument("--video_file", type=str, default=None,
+                       help="Specific video file to process (overrides --videos_dir)")
     parser.add_argument("--auto_skip", action="store_true",
                        help="Auto-skip low/medium confidence frames, only save high confidence")
     parser.add_argument("--review_uncertain", action="store_true",
@@ -1429,7 +1451,8 @@ def main():
         yolo_model_path=args.yolo_model,
         engagement_file=args.engagement_file,
         auto_skip=args.auto_skip,
-        review_uncertain=args.review_uncertain
+        review_uncertain=args.review_uncertain,
+        video_file=args.video_file
     )
     
     pipeline.run()
