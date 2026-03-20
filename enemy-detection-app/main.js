@@ -9,6 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow;
+let currentProcess = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -70,7 +71,12 @@ ipcMain.handle('run-prediction', async (event, imagePath) => {
     const pythonExe = path.join(projectRoot, '.venv', 'Scripts', 'python.exe');
     const scriptPath = path.join(projectRoot, 'src', 'predict_cli.py');
 
-    const pythonProcess = spawn(pythonExe, [scriptPath, imagePath], {
+    // Get downloads path and create a unique filename
+    const downloadsPath = app.getPath('downloads');
+    const timestamp = new Date().getTime();
+    const savePath = path.join(downloadsPath, `prediction_${timestamp}.png`);
+
+    const pythonProcess = spawn(pythonExe, [scriptPath, imagePath, '--save_path', savePath], {
       cwd: projectRoot,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     });
@@ -132,46 +138,157 @@ ipcMain.handle('save-links', async (event, linksText) => {
   }
 });
 
+ipcMain.handle('cancel-pipeline', async () => {
+  if (currentProcess) {
+    spawn("taskkill", ["/pid", currentProcess.pid, '/f', '/t']);
+    currentProcess = null;
+    return { success: true };
+  }
+  return { error: 'No process running' };
+});
+
 ipcMain.handle('run-pipeline-step', async (event, scriptName, argsArray = []) => {
-  if (!mainWindow) return { error: "No window" };
-  
-  return new Promise((resolve, reject) => {
-    const projectRoot = path.join(__dirname, '..');
-    const pythonExe = path.join(projectRoot, '.venv', 'Scripts', 'python.exe');
-    
-    let scriptPath;
-    if (scriptName === 'run_pipeline.py' || scriptName === 'reset_project.py') {
-        scriptPath = path.join(projectRoot, scriptName);
-    } else {
-        scriptPath = path.join(projectRoot, 'src', scriptName);
+  // ... (keep existing implementation)
+});
+
+// --- NEW DATASET MANAGEMENT HANDLERS ---
+
+ipcMain.handle('list-datasets', async () => {
+    try {
+        const projectRoot = path.join(__dirname, '..');
+        const dataSetsDir = path.join(projectRoot, 'data_sets');
+        if (!fs.existsSync(dataSetsDir)) return [];
+
+        const results = [];
+        const items = fs.readdirSync(dataSetsDir, { withFileTypes: true });
+
+        for (const item of items) {
+            if (item.isDirectory()) {
+                const itemPath = path.join(dataSetsDir, item.name);
+                // Look for CSV files in this directory or subdirectories
+                const files = fs.readdirSync(itemPath);
+                const csvFiles = files.filter(f => f.endsWith('.csv') || f.endsWith('.csv.backup'));
+                
+                if (csvFiles.length > 0) {
+                    results.push({
+                        name: item.name,
+                        path: itemPath,
+                        csvs: csvFiles
+                    });
+                } else {
+                    // Check one level deeper (e.g., train/labels.csv)
+                    const subdirs = fs.readdirSync(itemPath, { withFileTypes: true })
+                        .filter(sd => sd.isDirectory());
+                    
+                    for (const sd of subdirs) {
+                        const sdPath = path.join(itemPath, sd.name);
+                        const sdFiles = fs.readdirSync(sdPath);
+                        const sdCsvs = sdFiles.filter(f => f.endsWith('.csv') || f.endsWith('.csv.backup'));
+                        if (sdCsvs.length > 0) {
+                            results.push({
+                                name: `${item.name}/${sd.name}`,
+                                path: sdPath,
+                                csvs: sdCsvs
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        return results;
+    } catch (error) {
+        console.error("Error listing datasets:", error);
+        return [];
     }
+});
 
-    const pythonProcess = spawn(pythonExe, [scriptPath, ...argsArray], {
-      cwd: projectRoot,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
-    });
+ipcMain.handle('analyze-dataset-bias', async (event, datasetPath, csvName) => {
+    return new Promise((resolve) => {
+        const projectRoot = path.join(__dirname, '..');
+        const pythonExe = path.join(projectRoot, '.venv', 'Scripts', 'python.exe');
+        const scriptPath = path.join(projectRoot, 'src', 'visualize_dataset.py');
+        const csvPath = path.join(datasetPath, csvName);
+        
+        // Output image in the dataset folder for persistence
+        const outputPath = path.join(datasetPath, 'bias_visual_app.png');
 
-    pythonProcess.stdout.on('data', (data) => {
-      mainWindow.webContents.send('pipeline-output', { type: 'stdout', msg: data.toString() });
-    });
+        const pythonProcess = spawn(pythonExe, [scriptPath, '--csv', csvPath, '--output', outputPath], {
+            cwd: projectRoot,
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+        });
 
-    pythonProcess.stderr.on('data', (data) => {
-      mainWindow.webContents.send('pipeline-output', { type: 'stderr', msg: data.toString() });
+        pythonProcess.on('close', (code) => {
+            if (code === 0) resolve({ success: true, imagePath: outputPath });
+            else resolve({ error: `Analysis failed with code ${code}` });
+        });
     });
+});
 
-    pythonProcess.on('close', (code) => {
-      mainWindow.webContents.send('pipeline-output', { type: 'exit', msg: `Process exited with code ${code}` });
-      if (code !== 0) {
-        resolve({ error: `Process exited with code ${code}` });
-      } else {
-        resolve({ success: true });
-      }
+ipcMain.handle('run-bias-fix', async (event, datasetPath, csvName) => {
+    return new Promise((resolve) => {
+        const projectRoot = path.join(__dirname, '..');
+        const pythonExe = path.join(projectRoot, '.venv', 'Scripts', 'python.exe');
+        const cleanScript = path.join(projectRoot, 'src', 'clean_dataset_remove_bias.py');
+        const vizScript = path.join(projectRoot, 'src', 'visualize_dataset.py');
+        
+        const inputCsv = path.join(datasetPath, csvName);
+        const imgDir = path.join(datasetPath, 'images');
+        
+        // Output to a "cleaned" subfolder
+        const outputDir = path.join(datasetPath, 'cleaned_balanced');
+        const cleanedCsv = path.join(outputDir, 'labels_cleaned.csv');
+        const finalVizPath = path.join(outputDir, 'bias_after_fix.png');
+
+        // 1. Run Cleaning
+        const cleanProcess = spawn(pythonExe, [cleanScript, '--csv', inputCsv, '--img_dir', imgDir, '--output_dir', outputDir], {
+            cwd: projectRoot,
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+        });
+
+        cleanProcess.on('close', (cleanCode) => {
+            if (cleanCode !== 0) return resolve({ error: `Cleaning failed with code ${cleanCode}` });
+
+            // 2. Run Visualization on Cleaned Data
+            const vizProcess = spawn(pythonExe, [vizScript, '--csv', cleanedCsv, '--output', finalVizPath], {
+                cwd: projectRoot,
+                env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+            });
+
+            vizProcess.on('close', (vizCode) => {
+                if (vizCode === 0) resolve({ success: true, imagePath: finalVizPath, csvPath: cleanedCsv });
+                else resolve({ error: `Visualization failed with code ${vizCode}` });
+            });
+        });
     });
-    
-    pythonProcess.on('error', (err) => {
-      mainWindow.webContents.send('pipeline-output', { type: 'stderr', msg: `Failed to start process: ${err.message}` });
-      resolve({ error: err.message });
+});
+
+ipcMain.handle('run-training', async (event, datasetPath, csvName, epochs = 10) => {
+    return new Promise((resolve) => {
+        const projectRoot = path.join(__dirname, '..');
+        const pythonExe = path.join(projectRoot, '.venv', 'Scripts', 'python.exe');
+        const trainScript = path.join(projectRoot, 'src', 'train.py');
+        
+        const csvPath = path.join(datasetPath, csvName);
+        const imgDir = path.join(datasetPath, 'images');
+
+        // Note: train.py might need adjustment to take absolute paths for images/csv
+        const trainProcess = spawn(pythonExe, [
+            trainScript, 
+            '--train_dir', imgDir, 
+            '--train_csv', csvPath,
+            '--epochs', epochs.toString()
+        ], {
+            cwd: projectRoot,
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+        });
+
+        trainProcess.stdout.on('data', (data) => {
+            mainWindow.webContents.send('pipeline-output', { type: 'stdout', msg: data.toString() });
+        });
+
+        trainProcess.on('close', (code) => {
+            if (code === 0) resolve({ success: true });
+            else resolve({ error: `Training failed with code ${code}` });
+        });
     });
-  });
 });

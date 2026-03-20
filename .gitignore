@@ -60,3 +60,4 @@ models/loss_curve.png
 models/loss_curve.png
 /dataset
 *.pth
+*.png

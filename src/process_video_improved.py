@@ -73,7 +73,7 @@ MAX_TRACK_JUMP_PX = 50      # Maximum allowed position jump between frames
 
 # Frame sampling
 ENGAGEMENT_WINDOW = [-30, -20, -10, 0, 10, 20]  # Frame offsets around engagements
-RANDOM_SAMPLE_RATE = 0.10   # 10% random exploration frames
+RANDOM_SAMPLE_RATE = 0.02   # 2% random exploration frames (reduced for speed)
 
 # Quality control
 BLUR_THRESHOLD = 100        # Laplacian variance threshold
@@ -175,27 +175,12 @@ class SpatialBalancer:
         Determine if sample should be accepted based on spatial balance.
         Returns: (accept, priority_score)
         """
+        # Bias protection removed: Always accept all samples exactly as they are.
+        # Still keep track of distribution for analysis
         cell_x, cell_y = self.get_cell(x_norm, y_norm)
-        
-        if not self.is_cell_full(cell_x, cell_y):
-            # Higher priority for edge/corner cells
-            is_edge = (cell_x in [0, self.grid_size-1] or 
-                      cell_y in [0, self.grid_size-1])
-            is_center = (cell_x == 2 and cell_y == 2)
-            
-            if is_center:
-                priority = 0.5  # Lower priority for center
-            elif is_edge:
-                priority = 2.0  # Higher priority for edges
-            else:
-                priority = 1.0
-            
-            self.cell_counts[cell_x, cell_y] += 1
-            self.total_samples += 1
-            return True, priority
-        else:
-            # Cell is full - accept with 5% chance anyway
-            return random.random() < 0.05, 0.1
+        self.cell_counts[cell_x, cell_y] += 1
+        self.total_samples += 1
+        return True, 1.0
 
     def get_statistics(self) -> Dict:
         """Return current distribution statistics."""
@@ -864,6 +849,10 @@ class ImprovedDataPipeline:
         self.labels = []
         self.seen_hashes = {}  # hash -> frame info
         
+        # Live Preview Heatmap
+        self.live_preview = np.zeros((720, 1280, 3), dtype=np.uint8)
+        cv2.namedWindow("Live Detection Map", cv2.WINDOW_NORMAL)
+        
         # CSV setup
         self.csv_path = self.output_dir / "labels_enhanced.csv"
         self._init_csv()
@@ -886,9 +875,8 @@ class ImprovedDataPipeline:
         if not self.csv_path.exists():
             with open(self.csv_path, 'w', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=[
-                    'video_id', 'frame_index', 'has_enemy', 'x_center', 'y_center',
-                    'width', 'height', 'confidence', 'source_type', 'occluded',
-                    'multiple_targets', 'blur_score', 'image_hash', 'timestamp'
+                    'filename', 'x_norm', 'y_norm', 'video_id', 
+                    'frame_idx', 'timestamp', 'confidence', 'auto_labeled'
                 ])
                 writer.writeheader()
     
@@ -1126,6 +1114,19 @@ class ImprovedDataPipeline:
         
         self.high_confidence_labels.append(label)
         self.stats['auto_labeled'] += 1
+        
+        # Append to CSV dynamically
+        with open(self.csv_path, 'a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=list(label.keys()))
+            writer.writerow(label)
+            
+        # Update live preview window mask
+        vx = int((cx / frame.shape[1]) * 1280)
+        vy = int((cy / frame.shape[0]) * 720)
+        cv2.circle(self.live_preview, (vx, vy), 3, (0, 0, 255), -1)
+        cv2.imshow("Live Detection Map", self.live_preview)
+        cv2.waitKey(1)
+        
         logger.info(f"  [Auto] Saved high confidence frame: {img_path.name} (conf: {detection['confidence']:.2f})")
     
     def _prompt_final_decision(self) -> str:
@@ -1309,23 +1310,34 @@ class ImprovedDataPipeline:
         
         # Process frames
         saved_count = 0
-        for frame_idx in tqdm(sample_frames, desc=f"{video_id}"):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        sample_set = set(sample_frames)
+        max_frame = max(sample_set) if sample_set else 0
+        
+        frame_idx = 0
+        pbar = tqdm(total=len(sample_set), desc=f"{video_id}")
+        
+        while cap.isOpened() and frame_idx <= max_frame:
             ret, frame = cap.read()
-            
             if not ret:
-                continue
+                break
+                
+            if frame_idx in sample_set:
+                timestamp = frame_idx / fps
+                
+                if self.auto_skip:
+                    # Automated mode - no user interaction
+                    if self._process_frame_automated(frame, video_id, frame_idx, timestamp):
+                        saved_count += 1
+                else:
+                    # Original interactive mode
+                    if self._process_frame(frame, video_id, frame_idx, sampler):
+                        saved_count += 1
+                        
+                pbar.update(1)
+                
+            frame_idx += 1
             
-            timestamp = frame_idx / fps
-            
-            if self.auto_skip:
-                # Automated mode - no user interaction
-                if self._process_frame_automated(frame, video_id, frame_idx, timestamp):
-                    saved_count += 1
-            else:
-                # Original interactive mode
-                if self._process_frame(frame, video_id, frame_idx, sampler):
-                    saved_count += 1
+        pbar.close()
         
         cap.release()
         

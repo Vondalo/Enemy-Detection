@@ -31,34 +31,38 @@ def plot_spatial_distribution(csv_path, output_path):
         print("No valid coordinates found in CSV.")
         return
 
-    plt.figure(figsize=(10, 8), facecolor='#121212')
+    plt.figure(figsize=(12, 8), facecolor='white')
     ax = plt.gca()
-    ax.set_facecolor('#121212')
+    ax.set_facecolor('white')
     
-    # 2D Histogram (Heatmap)
-    # Origin at top-left to match image coordinates
-    plt.hist2d(x_coords, y_coords, bins=40, range=[[0, 1], [0, 1]], cmap='magma', cmin=1)
+    # Scatter Plot (Red Dots)
+    plt.scatter(x_coords, y_coords, color='red', s=20, alpha=0.6, edgecolors='none')
     
     # Add center crosshair lines
-    plt.axvline(x=0.5, color='white', linestyle='--', alpha=0.3)
-    plt.axhline(y=0.5, color='white', linestyle='--', alpha=0.3)
+    plt.axvline(x=0.5, color='gray', linestyle='--', alpha=0.5)
+    plt.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
     
     # Add labels
-    plt.title(f"Enemy Spatial Distribution\nSource: {Path(csv_path).name}", color='white', pad=20)
-    plt.xlabel("Normalized X", color='white')
-    plt.ylabel("Normalized Y", color='white')
-    plt.colorbar(label='Sample Count')
+    plt.title(f"Enemy Position Distribution\nSource: {Path(csv_path).name}", color='black', pad=20)
+    plt.xlabel("Normalized X", color='black')
+    plt.ylabel("Normalized Y", color='black')
+    
+    # Set axis limits
+    plt.xlim(0, 1)
+    plt.ylim(0, 1)
     
     # Invert Y to match screen coords (0,0 is top-left)
     plt.gca().invert_yaxis()
     
     # Styling
-    ax.tick_params(colors='white')
+    ax.tick_params(colors='black')
     for spine in ax.spines.values():
-        spine.set_edgecolor('white')
+        spine.set_edgecolor('black')
+        spine.set_visible(True)
     
+    plt.grid(True, linestyle=':', alpha=0.3, color='gray')
     plt.tight_layout()
-    plt.savefig(output_path, dpi=120, facecolor='#121212')
+    plt.savefig(output_path, dpi=150, facecolor='white')
     plt.close()
     print(f"Heatmap saved to: {output_path}")
 

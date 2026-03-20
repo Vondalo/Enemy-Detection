@@ -1,0 +1,23 @@
+============================================================
+  DATASET POSITIONAL BIAS ANALYSIS REPORT
+============================================================
+
+Total samples: 30
+X distribution: mean=0.2242, std=0.2288
+Y distribution: mean=0.4484, std=0.2845
+
+Center 20% (crosshair): 0 samples (0.0%)
+Center 30% (expanded):  1 samples (3.3%)
+
+Quadrant distribution:
+  Top-Left:     43.3%
+  Top-Right:    10.0%
+  Bottom-Left:  36.7%
+  Bottom-Right: 10.0%
+
+Edges (within 10%):   18 samples (60.0%)
+Corners (within 15%): 10 samples (33.3%)
+
+Center bias ratio: 0.00x
+
+Conclusion: WELL BALANCED - No significant issues

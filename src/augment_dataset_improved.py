@@ -578,18 +578,11 @@ class BiasAwareAugmentation:
         self.stats['by_region'][region] += 1
         
         # Get allowed augmentations and max count
-        if region == 'center':
-            allowed = CENTER_AUGMENTATIONS
-            max_aug = MAX_AUG_PER_SAMPLE['center']
-            intensity = AUGMENTATION_INTENSITY['center']
-        elif region == 'corner':
-            allowed = CORNER_AUGMENTATIONS
-            max_aug = MAX_AUG_PER_SAMPLE['corner']
-            intensity = AUGMENTATION_INTENSITY['corner']
-        else:  # edge
-            allowed = EDGE_AUGMENTATIONS
-            max_aug = MAX_AUG_PER_SAMPLE['edge']
-            intensity = AUGMENTATION_INTENSITY['edge']
+        # Bias protection removed: Apply the same max augmentations to all regions 
+        # (center, edge, corner now treated equally with the highest intensity)
+        allowed = CORNER_AUGMENTATIONS
+        max_aug = MAX_AUG_PER_SAMPLE['corner']
+        intensity = AUGMENTATION_INTENSITY['corner']
         
         count = 0
         aug = Augmentations()

@@ -57,7 +57,8 @@ def main():
         cmd_collect = [
             sys.executable, "src/process_video_improved.py",
             "--videos_dir", args.videos_dir,
-            "--output_dir", "dataset/labeled"
+            "--output_dir", "dataset/labeled",
+            "--yolo_model", "yolov8n.pt"
         ]
         if args.auto_skip:
             cmd_collect.append("--auto_skip")
@@ -74,37 +75,48 @@ def main():
     ]
     run_command(cmd_augment, "2. Bias-Aware Augmentation & Relocation")
     
-    # 3. SPATIAL ANALYSIS (Visualize Center Bias / Blind spot fixes)
-    cmd_visualize = [
-        sys.executable, "src/visualize_dataset.py",
-        "--csv", "dataset/augmented/augmented_labels.csv",
-        "--output", "dataset/augmented/center_bias_heatmap.png"
-    ]
-    run_command(cmd_visualize, "3a. Generate Bias Heatmap")
-    
-    # 4. TRAIN/VAL SPLITTING
-    cmd_split = [
-        sys.executable, "src/split_dataset.py",
+    # 3. DATASET CLEANING & REBALANCING (Remove Player Model & Fix Bias)
+    cmd_clean = [
+        sys.executable, "src/clean_dataset_remove_bias.py",
         "--csv", "dataset/augmented/augmented_labels.csv",
         "--img_dir", "dataset/augmented/images",
+        "--output_dir", "dataset/cleaned"
+    ]
+    run_command(cmd_clean, "3. Dataset Cleaning & Rebalancing")
+    
+    # 4. SPATIAL ANALYSIS (Visualize Center Bias / Blind spot fixes)
+    cmd_visualize = [
+        sys.executable, "src/visualize_dataset.py",
+        "--csv", "dataset/cleaned/labels_cleaned.csv",
+        "--output", "dataset/cleaned/center_bias_heatmap.png"
+    ]
+    run_command(cmd_visualize, "4a. Generate Bias Heatmap")
+    
+    # 5. TRAIN/VAL SPLITTING
+    cmd_split = [
+        sys.executable, "src/split_dataset.py",
+        "--csv", "dataset/cleaned/labels_cleaned.csv",
+        "--img_dir", "dataset/cleaned/images",
         "--output_dir", "dataset/final",
         "--val_ratio", "0.2",
         "--stratified"
     ]
-    run_command(cmd_split, "3b. Stratified Video Split")
+    run_command(cmd_split, "4b. Stratified Video Split")
     
-    # 5. MODEL TRAINING
+    # 6. MODEL TRAINING
     cmd_train = [
         sys.executable, "src/train.py",
+        # Use relative path from script location if needed, 
+        # but train.py usually looks at dataset/final/
         "--epochs", str(args.epochs),
         "--batch_size", "16",
         "--lr", "1e-4"
     ]
-    run_command(cmd_train, "4. Model Training")
+    run_command(cmd_train, "5. Model Training")
     
     print("🎉 PIPELINE COMPLETED SUCCESSFULLY! 🎉")
     print("Best model saved to: models/best_model.pth")
-    print("Bias visualization saved to: dataset/augmented/center_bias_heatmap.png")
+    print("Bias visualization saved to: dataset/cleaned/center_bias_heatmap.png")
 
 if __name__ == "__main__":
     main()

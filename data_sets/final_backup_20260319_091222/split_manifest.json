@@ -1,0 +1,17 @@
+{
+  "train_videos": [
+    "MariusCOW_Highlights_57_ft._Best_of_2025.f400"
+  ],
+  "val_videos": [
+    "The_Box.f401",
+    "t_r_a_n_s_p_a_r_e_n_t_s_o_u_l_Peterbot_Highlights_39.f400"
+  ],
+  "val_ratio": 0.2,
+  "stratified": true,
+  "random_seed": 42,
+  "source_csv": "dataset/augmented/augmented_labels.csv",
+  "train_samples": 836,
+  "val_samples": 41,
+  "train_copied": 836,
+  "val_copied": 41
+}

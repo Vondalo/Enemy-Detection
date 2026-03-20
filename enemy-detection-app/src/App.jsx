@@ -62,6 +62,13 @@ const Presentation = () => {
         }
     };
 
+    const handleCancel = async () => {
+        if (!isRunning) return;
+        setLogs(prev => [...prev, '\n[System] Aborting current pipeline process via KILL signal...']);
+        await window.electronAPI.cancelPipeline();
+        setIsRunning(false);
+    };
+
     const handleSelectImage = async () => {
         const path = await window.electronAPI.selectImage();
         if (path) {
@@ -80,9 +87,17 @@ const Presentation = () => {
             if (result.error) {
                 setLogs(prev => [...prev, `[Error] ${result.error}`]);
             } else {
-                setPrediction(result.prediction);
+                if (result.saved_image_path) {
+                    setImagePath(result.saved_image_path);
+                    setPrediction(null); // Dot is already stamped on the image
+                } else {
+                    setPrediction(result.prediction);
+                }
                 setTruth(result.truth);
                 setLogs(prev => [...prev, `[Success] Found target at [${result.prediction[0].toFixed(3)}, ${result.prediction[1].toFixed(3)}]`]);
+                if (result.saved_image_path) {
+                    setLogs(prev => [...prev, `[System] Stamped image saved to: ${result.saved_image_path}`]);
+                }
             }
         } catch (err) {
             setLogs(prev => [...prev, `[Exception] ${err.message}`]);
@@ -114,7 +129,15 @@ const Presentation = () => {
                     <div className="w-3 h-3 rounded-full bg-emerald-500/80"></div>
                     <span className="ml-2 text-slate-500 text-xs tracking-wider">TERMINAL</span>
                 </div>
-                {isRunning && <span className="text-emerald-400 text-xs animate-pulse">Running...</span>}
+                {isRunning && (
+                    <div className="flex items-center gap-4">
+                        <button 
+                            onClick={handleCancel} 
+                            className="px-3 py-1 bg-red-600/20 text-red-500 hover:bg-red-600/40 rounded border border-red-500/30 text-xs font-bold uppercase tracking-wider transition-colors shadow-lg shadow-red-900/20"
+                        >Force Stop</button>
+                        <span className="text-emerald-400 text-xs animate-pulse">Running...</span>
+                    </div>
+                )}
             </div>
             <div className="p-4 overflow-y-auto flex-1 text-slate-300 leading-relaxed break-all whitespace-pre-wrap">
                 {logs.length === 0 ? (
@@ -193,26 +216,35 @@ const Presentation = () => {
                     </div>
 
                     {!imagePath ? (
-                        <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-slate-800 rounded-xl text-slate-500 p-12">
+                        <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-slate-800 rounded-xl text-slate-500 p-12 min-h-[300px]">
                             <Target size={48} className="mb-4 opacity-50" />
                             <p>Select a screenshot to begin analysis</p>
                         </div>
                     ) : (
-                        <div className="relative rounded-xl border-2 border-slate-700 overflow-hidden bg-black flex-1 min-h-[300px] flex items-center justify-center group overflow-hidden">
-                            <img ref={imgRef} src={`file://${imagePath}`} alt="Input" onLoad={updateImageDims} className="absolute max-w-full max-h-full object-contain" />
-                            
-                            {prediction && imgDims.width > 0 && (
-                                <div 
-                                    className="absolute w-3 h-3 bg-red-500 rounded-full shadow-[0_0_15px_#ef4444] z-10 transition-all duration-500"
-                                    style={{ left: `${prediction[0] * imgDims.width}px`, top: `${prediction[1] * imgDims.height}px`, transform: 'translate(-50%, -50%)' }}
+                        <div className="rounded-xl border-2 border-slate-700 bg-black flex-1 min-h-[300px] flex items-center justify-center overflow-hidden p-6 py-12">
+                            <div className="relative inline-block max-w-full max-h-full shadow-2xl">
+                                <img 
+                                    src={`file://${imagePath}`} 
+                                    alt="Input" 
+                                    className="max-w-full max-h-[50vh] object-contain block filter brightness-110 contrast-125 saturate-150 rounded" 
                                 />
-                            )}
-                            {truth && imgDims.width > 0 && (
-                                <div 
-                                    className="absolute w-3 h-3 bg-emerald-500 rounded-full shadow-[0_0_15px_#10b981] z-10 transition-all duration-500"
-                                    style={{ left: `${truth[0] * imgDims.width}px`, top: `${truth[1] * imgDims.height}px`, transform: 'translate(-50%, -50%)' }}
-                                />
-                            )}
+                                {prediction && (
+                                    <div 
+                                        className="absolute w-9 h-9 border-2 border-red-500/80 bg-red-500/10 rounded-full shadow-[0_0_20px_#ef4444] z-10 transition-all duration-500 pointer-events-none"
+                                        style={{ left: `${prediction[0] * 100}%`, top: `${prediction[1] * 100}%`, transform: 'translate(-50%, -50%)' }}
+                                    >
+                                        <div className="absolute top-1/2 left-1/2 w-1.5 h-1.5 bg-white rounded-full -translate-x-1/2 -translate-y-1/2 shadow-lg shadow-black group-hover:bg-red-200"></div>
+                                        <div className="absolute top-1/2 left-1/2 w-full h-[1px] bg-red-500/50 -translate-x-1/2 -translate-y-1/2"></div>
+                                        <div className="absolute top-1/2 left-1/2 w-[1px] h-full bg-red-500/50 -translate-x-1/2 -translate-y-1/2"></div>
+                                    </div>
+                                )}
+                                {truth && (
+                                    <div 
+                                        className="absolute w-3 h-3 bg-emerald-500 rounded-full shadow-[0_0_15px_#10b981] z-10 transition-all duration-500 pointer-events-none"
+                                        style={{ left: `${truth[0] * 100}%`, top: `${truth[1] * 100}%`, transform: 'translate(-50%, -50%)' }}
+                                    />
+                                )}
+                            </div>
                         </div>
                     )}
                     {renderTerminal()}
@@ -305,7 +337,13 @@ const Presentation = () => {
                             Run PyTorch to train the architecture using MobileNet/ResNet backbone with MSE loss optimized by Adam.
                         </p>
                         <button 
-                            onClick={() => handleRunStep('train.py', ['--epochs', '30', '--batch_size', '16', '--lr', '1e-4'])}
+                            onClick={() => handleRunStep('train.py', [
+                                '--train_csv', 'src/fn-dataset/train/labels.csv', 
+                                '--train_dir', 'src/fn-dataset/train/images', 
+                                '--val_csv', 'src/fn-dataset/valid/labels.csv', 
+                                '--val_dir', 'src/fn-dataset/valid/images',
+                                '--epochs', '30', '--batch_size', '16', '--lr', '1e-4'
+                            ])}
                             disabled={isRunning}
                             className="px-6 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg text-sm font-bold w-full flex justify-center items-center gap-2"
                         >Start Model Training <BrainCircuit size={18}/></button>

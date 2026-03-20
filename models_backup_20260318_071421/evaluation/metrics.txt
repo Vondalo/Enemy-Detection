@@ -1,7 +1,0 @@
-Average Pixel Error: 3.54 px
-Median Pixel Error:  3.28 px
-Std Pixel Error:     2.22 px
-Min Pixel Error:     0.30 px
-Max Pixel Error:     15.67 px
-< 50px accuracy:     100.0%
-< 100px accuracy:    100.0%
