@@ -1,0 +1,20 @@
+{
+  "total_input": 89,
+  "total_output": 457,
+  "by_region": {
+    "center": 51,
+    "edge": 38,
+    "corner": 0
+  },
+  "by_type": {
+    "original": 89,
+    "brightness_0.7": 89,
+    "brightness_1.3": 89,
+    "noise": 89,
+    "flip": 38,
+    "zoom": 38,
+    "maskedpan": 23,
+    "shift": 2
+  },
+  "skipped": 0
+}

@@ -17,5 +17,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   runTraining: (datasetPath, csvName, epochs) => ipcRenderer.invoke('run-training', datasetPath, csvName, epochs),
   listVideos: () => ipcRenderer.invoke('list-videos'),
   runDataCollection: (videoName, datasetName) => ipcRenderer.invoke('run-data-collection', videoName, datasetName),
-  runAugmentation: (datasetPath, csvName, outputDatasetName) => ipcRenderer.invoke('run-augmentation', datasetPath, csvName, outputDatasetName)
+  runAugmentation: (datasetPath, csvName, outputDatasetName) => ipcRenderer.invoke('run-augmentation', datasetPath, csvName, outputDatasetName),
+  
+  // Window Controls
+  minimizeWindow: () => ipcRenderer.send('window-minimize'),
+  maximizeWindow: () => ipcRenderer.send('window-maximize'),
+  closeWindow: () => ipcRenderer.send('window-close')
 });

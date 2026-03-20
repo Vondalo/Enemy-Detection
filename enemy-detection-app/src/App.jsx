@@ -1,6 +1,35 @@
 import { useState, useRef, useEffect } from 'react';
-import { Target, Gamepad2, MonitorPlay, Database, BrainCircuit, BarChart3, ChevronRight, ChevronLeft, ScanEye, Terminal, Layers, Cpu, CheckCircle, CloudDownload, Trash2 } from 'lucide-react';
+import { X, Minus, Square, Copy, Target, Gamepad2, MonitorPlay, Database, BrainCircuit, BarChart3, ChevronRight, ChevronLeft, ScanEye, Terminal, Layers, Cpu, CheckCircle, CloudDownload, Trash2 } from 'lucide-react';
 import './index.css';
+
+const TitleBar = () => (
+    <div className="h-8 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 drag select-none">
+        <div className="flex items-center gap-2">
+            <ScanEye size={16} className="text-blue-500" />
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Enemy Detection Hub</span>
+        </div>
+        <div className="flex items-center no-drag">
+            <button 
+                onClick={() => window.electronAPI.minimizeWindow()}
+                className="p-2 hover:bg-slate-800 text-slate-400 transition"
+            >
+                <Minus size={14} />
+            </button>
+            <button 
+                onClick={() => window.electronAPI.maximizeWindow()}
+                className="p-2 hover:bg-slate-800 text-slate-400 transition"
+            >
+                <Square size={12} />
+            </button>
+            <button 
+                onClick={() => window.electronAPI.closeWindow()}
+                className="p-2 hover:bg-rose-600 hover:text-white text-slate-400 transition"
+            >
+                <X size={14} />
+            </button>
+        </div>
+    </div>
+);
 
 const Presentation = () => {
     const [currentSlide, setCurrentSlide] = useState(0);
@@ -527,6 +556,7 @@ const Presentation = () => {
                             className="px-6 py-3 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-rose-900/20 text-sm font-bold w-full flex justify-center items-center gap-2"
                         >Start Training <BrainCircuit size={18}/></button>
                     </div>
+                    {renderTerminal()}
                 </div>
             )
         },
@@ -597,19 +627,21 @@ const Presentation = () => {
     ];
 
     return (
-        <div className="flex flex-col h-screen w-full bg-slate-950 text-slate-200 overflow-hidden font-sans selection:bg-blue-500/30">
+        <div className="flex flex-col h-screen w-full bg-slate-950 text-slate-200 overflow-hidden font-sans selection:bg-blue-500/30 drag border border-slate-800">
+            <TitleBar />
+            
             {/* Header/Progress */}
-            <div className="h-1.5 bg-slate-800 w-full relative z-50">
+            <div className="h-1.5 bg-slate-800 w-full relative z-40 no-drag">
                 <div 
                     className="h-full bg-gradient-to-r from-blue-500 to-emerald-400 transition-all duration-500 ease-out"
                     style={{ width: `${((currentSlide + 1) / slides.length) * 100}%` }}
                 />
             </div>
 
-            <div className="flex-1 flex flex-col md:flex-row max-w-7xl mx-auto w-full p-4 md:p-8 gap-6 h-full">
+            <div className="flex-1 flex flex-col md:flex-row max-w-7xl mx-auto w-full p-4 md:p-8 gap-6 h-full overflow-hidden">
                 
                 {/* Sidebar Navigation */}
-                <div className="hidden md:flex flex-col w-64 space-y-2 pr-4 border-r border-slate-800/50">
+                <div className="hidden md:flex flex-col w-64 space-y-2 pr-4 border-r border-slate-800/50 no-drag">
                     <div className="mb-6 px-4">
                         <h1 className="text-lg font-black tracking-tight text-white mb-1">DSAI Dashboard</h1>
                         <p className="text-xs font-mono text-slate-500">v1.1.0-alpha</p>
@@ -631,7 +663,7 @@ const Presentation = () => {
                 </div>
 
                 {/* Main Content Area */}
-                <div className="flex-1 flex flex-col relative bg-slate-950/50 rounded-2xl md:border border-slate-800/50 shadow-2xl overflow-hidden h-full">
+                <div className="flex-1 flex flex-col relative bg-slate-950/50 rounded-2xl md:border border-slate-800/50 shadow-2xl overflow-hidden h-full no-drag">
                     <div className="p-8 pb-0 animate-fade-in-down border-b border-transparent">
                         <div className="flex items-center gap-3 text-blue-400 mb-2">
                             {slides[currentSlide].icon}
