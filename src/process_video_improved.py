@@ -887,8 +887,9 @@ class ImprovedDataPipeline:
         if not self.csv_path.exists():
             with open(self.csv_path, 'w', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=[
-                    'filename', 'x_norm', 'y_norm', 'video_id', 
-                    'frame_idx', 'timestamp', 'confidence', 'auto_labeled'
+                    'filename', 'class_id', 'class_name', 'has_enemy', 'x_center',
+                    'y_center', 'width', 'height', 'video_id', 'frame_idx',
+                    'timestamp', 'confidence', 'auto_labeled', 'bbox_source', 'aug_type'
                 ])
                 writer.writeheader()
     
@@ -907,6 +908,51 @@ class ImprovedDataPipeline:
         
         self.labels.append(entry)
         logger.info(f"    [Saved] {img_name} ({entry.source_type}, conf: {entry.confidence:.2f})")
+
+    @staticmethod
+    def _normalize_detection(detection: Dict, frame_shape: tuple) -> Dict:
+        h, w = frame_shape[:2]
+        x1, y1, x2, y2 = detection['bbox']
+        cx, cy = detection['center']
+        return {
+            'x_center': cx / w,
+            'y_center': cy / h,
+            'width': (x2 - x1) / w,
+            'height': (y2 - y1) / h,
+        }
+
+    def _build_label_row(self, image_name: str, detection: Dict, frame_shape: tuple,
+                         video_id: str, frame_idx: int, timestamp: float,
+                         auto_labeled: bool) -> Dict:
+        normalized = self._normalize_detection(detection, frame_shape)
+        return {
+            'filename': image_name,
+            'class_id': 0,
+            'class_name': 'enemy',
+            'has_enemy': 1,
+            'x_center': f"{normalized['x_center']:.6f}",
+            'y_center': f"{normalized['y_center']:.6f}",
+            'width': f"{normalized['width']:.6f}",
+            'height': f"{normalized['height']:.6f}",
+            'video_id': video_id,
+            'frame_idx': frame_idx,
+            'timestamp': timestamp,
+            'confidence': detection['confidence'],
+            'auto_labeled': auto_labeled,
+            'bbox_source': 'measured',
+            'aug_type': '',
+        }
+
+    def _write_yolo_label(self, image_name: str, detection: Dict, frame_shape: tuple):
+        labels_dir = self.output_dir / "labels"
+        labels_dir.mkdir(parents=True, exist_ok=True)
+        label_path = labels_dir / f"{Path(image_name).stem}.txt"
+        normalized = self._normalize_detection(detection, frame_shape)
+        label_path.write_text(
+            f"0 {normalized['x_center']:.6f} {normalized['y_center']:.6f} "
+            f"{normalized['width']:.6f} {normalized['height']:.6f}\n",
+            encoding='utf-8'
+        )
     
     def _run_detection(self, frame: np.ndarray, frame_idx: int = 0) -> List[Dict]:
         """Run YOLO detection and return filtered results (excluding self-player)."""
@@ -1103,26 +1149,29 @@ class ImprovedDataPipeline:
         return preview
     
     def _save_high_confidence(self, frame: np.ndarray, confidence_data: Dict,
-                             video_id: str, frame_idx: int, timestamp: float):
+                             video_id: str, frame_idx: int, timestamp: float,
+                             auto_labeled: bool = True):
         """Save high-confidence frame immediately."""
         detection = confidence_data['detection']
         cx, cy = detection['center']
         
         # Save image
-        img_path = self.output_dir / "images" / f"{video_id}_{frame_idx:06d}.png"
+        image_name = f"{video_id}_{frame_idx:06d}.png"
+        img_path = self.output_dir / "images" / image_name
+        img_path.parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(img_path), frame)
+        self._write_yolo_label(image_name, detection, frame.shape)
         
         # Add to labels
-        label = {
-            'filename': img_path.name,
-            'x_norm': cx / frame.shape[1],
-            'y_norm': cy / frame.shape[0],
-            'video_id': video_id,
-            'frame_idx': frame_idx,
-            'timestamp': timestamp,
-            'confidence': detection['confidence'],
-            'auto_labeled': True
-        }
+        label = self._build_label_row(
+            image_name=image_name,
+            detection=detection,
+            frame_shape=frame.shape,
+            video_id=video_id,
+            frame_idx=frame_idx,
+            timestamp=timestamp,
+            auto_labeled=auto_labeled,
+        )
         
         self.high_confidence_labels.append(label)
         self.stats['auto_labeled'] += 1
@@ -1205,9 +1254,14 @@ class ImprovedDataPipeline:
             # Save with corrected label
             detection = frame_data.get('best_detection', {})
             if detection:
-                self._save_high_confidence(frame, {'detection': detection, 'score': 1.0},
-                                           frame_data['video_id'], frame_data['frame_idx'], 
-                                           frame_data['timestamp'])
+                self._save_high_confidence(
+                    frame,
+                    {'detection': detection, 'score': 1.0},
+                    frame_data['video_id'],
+                    frame_data['frame_idx'],
+                    frame_data['timestamp'],
+                    auto_labeled=False,
+                )
     
     def _process_high_confidence_batch(self):
         """Process all high-confidence frames through augmentation."""
@@ -1220,8 +1274,11 @@ class ImprovedDataPipeline:
         # Save labels CSV
         labels_path = self.output_dir / "labels_enhanced.csv"
         with open(labels_path, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['filename', 'x_norm', 'y_norm', 'video_id', 
-                                                  'frame_idx', 'timestamp', 'confidence', 'auto_labeled'])
+            writer = csv.DictWriter(f, fieldnames=[
+                'filename', 'class_id', 'class_name', 'has_enemy', 'x_center',
+                'y_center', 'width', 'height', 'video_id', 'frame_idx',
+                'timestamp', 'confidence', 'auto_labeled', 'bbox_source', 'aug_type'
+            ])
             writer.writeheader()
             writer.writerows(self.high_confidence_labels)
         
@@ -1233,29 +1290,18 @@ class ImprovedDataPipeline:
         """Final dataset export and cleanup."""
         logger.info("Exporting final dataset...")
         
-        # Combine all labels
+        # Confirmed frames are persisted during _process_confirmed_frames,
+        # so the in-memory list already contains the complete dataset.
         all_labels = self.high_confidence_labels.copy()
-        for frame_data in self.confirmed_frames:
-            detection = frame_data.get('best_detection', {})
-            if detection:
-                cx, cy = detection['center']
-                label = {
-                    'filename': f"{frame_data['video_id']}_{frame_data['frame_idx']:06d}.png",
-                    'x_norm': cx / frame_data['frame_shape'][1],
-                    'y_norm': cy / frame_data['frame_shape'][0],
-                    'video_id': frame_data['video_id'],
-                    'frame_idx': frame_data['frame_idx'],
-                    'timestamp': frame_data['timestamp'],
-                    'confidence': detection['confidence'],
-                    'auto_labeled': False
-                }
-                all_labels.append(label)
         
         # Save final labels
         labels_path = self.output_dir / "labels_enhanced.csv"
         with open(labels_path, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['filename', 'x_norm', 'y_norm', 'video_id', 
-                                                  'frame_idx', 'timestamp', 'confidence', 'auto_labeled'])
+            writer = csv.DictWriter(f, fieldnames=[
+                'filename', 'class_id', 'class_name', 'has_enemy', 'x_center',
+                'y_center', 'width', 'height', 'video_id', 'frame_idx',
+                'timestamp', 'confidence', 'auto_labeled', 'bbox_source', 'aug_type'
+            ])
             writer.writeheader()
             writer.writerows(all_labels)
         

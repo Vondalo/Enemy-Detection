@@ -1,121 +1,99 @@
-# Game Enemy Localization – CNN Regression Project
+# Game Enemy Detection - Object Detection Pipeline
 
-A CNN-based system that predicts the **(x, y)** pixel coordinate of an enemy player in game screenshots. Built with **ResNet18** (pretrained on ImageNet) and a custom regression head.
+This project now trains an **object detector** instead of regressing a single `(x, y)` point. The data pipeline exports **bounding boxes** in YOLO format, the trainer fine-tunes a detector backbone with `ultralytics`, and inference returns full detections instead of a red-dot coordinate guess.
 
-## Project Structure
+## What Changed
 
-```
-Enemy-Detection/
-├── data/
-│   ├── raw/              # Raw screenshots (1920x1080)
-│   ├── processed/        # Processed/cleaned images
-│   └── labels/           # Ground truth CSVs
-├── src/
-│   ├── dataset.py        # PyTorch Dataset & DataLoaders
-│   ├── model.py          # ResNet18 regression model
-│   ├── train.py          # Training loop (MSE + Adam)
-│   ├── evaluate.py       # Pixel error metrics & visual overlays
-│   ├── process_video.py  # Video → labeled dataset pipeline
-│   ├── preprocess_images.py  # YOLO auto-labeling
-│   ├── screenshot_tool.py    # In-game screenshot capture
-│   └── test_gpu.py       # GPU availability check
-├── models/               # Saved model checkpoints & plots
-├── inference_demo.py     # Live inference demo
-├── SETUP.py              # Project scaffolding
-├── requirements.txt      # Python dependencies
-└── README.md             # This file
-```
+- The old ResNet18 coordinate regressor was replaced with a YOLO-style detector workflow.
+- Video processing now writes:
+  - `images/` for captured frames
+  - `labels/` with YOLO `.txt` annotations
+  - `labels_enhanced.csv` with bbox metadata (`x_center`, `y_center`, `width`, `height`)
+- Training now produces `models/best_model.pt`.
+- Inference returns bounding boxes, classes, confidences, and an annotated image.
 
-## Setup
+## Model Choices
 
-1. **Clone** the repo and create a virtual environment:
-   ```bash
-   git clone <repo-url>
-   cd Enemy-Detection
-   python -m venv venv
-   venv\Scripts\activate       # Windows
-   ```
+The trainer supports these detector baselines from `src/model.py`:
 
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+- `yolov8n`: best default for fast iteration and weaker GPUs
+- `yolov8s`: better small-target recall when you can afford more compute
+- `yolov8m`: stronger accuracy ceiling with higher VRAM/training cost
+- `rtdetr-l`: good comparison baseline when latency matters less than global scene reasoning
 
-3. **Verify GPU** (optional but recommended):
-   ```bash
-   python src/test_gpu.py
-   ```
+Default choice: `yolov8n`
 
-## Workflow
+Why that default:
+- It is already bundled in this repo as `yolov8n.pt`
+- It keeps iteration fast while you stabilize the new bbox labels
+- It is much easier to debug data issues with a fast detector than a heavy one
 
-### Phase 1 – Data Collection & Labeling
+## Typical Workflow
 
-1. **Capture screenshots** during gameplay:
-   ```bash
-   python src/screenshot_tool.py
-   # Press F10 to capture, ESC to quit
-   ```
+### 1. Collect bbox training data
 
-2. **Extract frames from video** with YOLO-assisted labeling:
-   ```bash
-   python src/process_video.py
-   # Click on enemies or press number keys, 'a' to accept, 'd' to skip
-   ```
-
-3. **Output**: Images in `src/dataset/uncleaned/` and `labels.csv` with columns `filename, x_norm, y_norm`.
-
-### Phase 2 – Training
-
-4. **Train the model**:
-   ```bash
-   python src/train.py --csv src/dataset/uncleaned/labels.csv --img_dir src/dataset/uncleaned --epochs 30
-   ```
-   - Saves best model to `models/best_model.pth`
-   - Saves loss curve to `models/loss_curve.png`
-
-### Phase 3 – Evaluation & Inference
-
-5. **Evaluate** accuracy:
-   ```bash
-   python src/evaluate.py --model models/best_model.pth --csv src/dataset/uncleaned/labels.csv --img_dir src/dataset/uncleaned
-   ```
-   - Prints Average Pixel Error, accuracy thresholds
-   - Saves error histogram and visual overlays to `models/evaluation/`
-
-6. **Run inference demo**:
-   ```bash
-   # Single image
-   python inference_demo.py --image path/to/screenshot.png
-
-   # Browse a directory
-   python inference_demo.py --dir src/dataset/uncleaned
-   # Controls: N = Next, P = Previous, Q = Quit
-   ```
-
-## Model Architecture
-
-```
-ResNet18 (pretrained) → AvgPool → Flatten
-  → Linear(512, 128) → ReLU → Dropout(0.3)
-  → Linear(128, 2) → Sigmoid
-  → Output: (x_norm, y_norm) ∈ [0, 1]
+```bash
+python src/process_video_improved.py --videos_dir src/videos --output_dir dataset/labeled --yolo_model yolov8n.pt --auto_skip
 ```
 
-## Training Config
+### 2. Augment collected labels
 
-| Parameter     | Value          |
-|---------------|----------------|
-| Loss Function | MSE            |
-| Optimizer     | Adam (lr=1e-4) |
-| Epochs        | 30             |
-| Batch Size    | 16             |
-| Input Size    | 256 × 256      |
-| Train/Val     | 80% / 20%      |
+```bash
+python src/augment_dataset_improved.py --input_csv dataset/labeled/labels_enhanced.csv --input_dir dataset/labeled/images --output_dir dataset/augmented
+```
 
-## Tech Stack
+### 3. Clean and rebalance
 
-- **Python 3.10+**
-- **PyTorch** + torchvision (ResNet18)
-- **OpenCV** (image processing & display)
-- **YOLOv8** (ultralytics, for assisted labeling)
-- **Matplotlib** (loss curves & plots)
+```bash
+python src/clean_dataset_remove_bias.py --csv dataset/augmented/augmented_labels.csv --img_dir dataset/augmented/images --output_dir dataset/cleaned
+```
+
+### 4. Split into YOLO train/val folders
+
+```bash
+python src/split_dataset.py --csv dataset/cleaned/labels_cleaned.csv --img_dir dataset/cleaned/images --output_dir dataset/final --val_ratio 0.2 --stratified
+```
+
+This writes:
+
+- `dataset/final/train/images`
+- `dataset/final/train/labels`
+- `dataset/final/val/images`
+- `dataset/final/val/labels`
+- `dataset/final/data.yaml`
+
+### 5. Train the detector
+
+```bash
+python src/train.py --dataset_dir dataset/final --model yolov8n --epochs 30 --batch_size 16
+```
+
+Or train directly from a collected CSV and let the script build the split for you:
+
+```bash
+python src/train.py --train_csv data_sets/my_dataset/labels_enhanced.csv --train_dir data_sets/my_dataset/images --model yolov8n --epochs 30
+```
+
+### 6. Run inference
+
+```bash
+python src/predict_cli.py path/to/frame.png --save_path annotated.png
+```
+
+## Output Format
+
+The bbox CSV now uses these core columns:
+
+- `filename`
+- `class_id`
+- `class_name`
+- `x_center`
+- `y_center`
+- `width`
+- `height`
+- `video_id`
+- `frame_idx`
+- `confidence`
+- `auto_labeled`
+
+Coordinates are normalized to `[0, 1]` in YOLO format.

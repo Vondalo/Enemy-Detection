@@ -40,9 +40,10 @@ const Presentation = () => {
 
     // Predictor State
     const [imagePath, setImagePath] = useState(null);
-    const [prediction, setPrediction] = useState(null);
+    const [detections, setDetections] = useState([]);
     const [truth, setTruth] = useState(null);
     const [predicting, setPredicting] = useState(false);
+    const [showDetectionOverlays, setShowDetectionOverlays] = useState(false);
     const imgRef = useRef(null);
     const [imgDims, setImgDims] = useState({ width: 0, height: 0 });
 
@@ -167,8 +168,9 @@ const Presentation = () => {
         const path = await window.electronAPI.selectImage();
         if (path) {
             setImagePath(path);
-            setPrediction(null);
+            setDetections([]);
             setTruth(null);
+            setShowDetectionOverlays(false);
         }
     };
 
@@ -181,14 +183,21 @@ const Presentation = () => {
             if (result.error) {
                 setLogs(prev => [...prev, `[Error] ${result.error}`]);
             } else {
+                const nextDetections = result.detections || [];
                 if (result.saved_image_path) {
                     setImagePath(result.saved_image_path);
-                    setPrediction(null); // Dot is already stamped on the image
+                    setShowDetectionOverlays(false);
                 } else {
-                    setPrediction(result.prediction);
+                    setShowDetectionOverlays(true);
                 }
+                setDetections(nextDetections);
                 setTruth(result.truth);
-                setLogs(prev => [...prev, `[Success] Found target at [${result.prediction[0].toFixed(3)}, ${result.prediction[1].toFixed(3)}]`]);
+                if (result.top_detection) {
+                    const top = result.top_detection;
+                    setLogs(prev => [...prev, `[Success] Found ${result.count} detection(s). Top box: ${(top.confidence * 100).toFixed(1)}% @ [${top.x_center.toFixed(3)}, ${top.y_center.toFixed(3)}]`]);
+                } else {
+                    setLogs(prev => [...prev, `[Success] No enemy detections above threshold.`]);
+                }
                 if (result.saved_image_path) {
                     setLogs(prev => [...prev, `[System] Stamped image saved to: ${result.saved_image_path}`]);
                 }
@@ -499,7 +508,7 @@ const Presentation = () => {
                             <h4 className="text-blue-400 text-xs font-bold uppercase tracking-widest mb-2">Augmentation Strategy</h4>
                             <ul className="text-xs text-slate-400 space-y-1">
                                 <li>• Spatially-aware augmentation (Edges/Corners priority)</li>
-                                <li>• Automatic coordinate transformation for rotates/flips</li>
+                                <li>• Automatic bounding-box transformation for rotates/flips</li>
                                 <li>• HUD-aware "Masked Pan" relocation</li>
                                 <li>• Pixel-level noise, blur and brightness shifts</li>
                             </ul>
@@ -593,16 +602,22 @@ const Presentation = () => {
                                     alt="Input" 
                                     className="max-w-full max-h-[45vh] object-contain block filter brightness-110 contrast-125 saturate-150 rounded" 
                                 />
-                                {prediction && (
-                                    <div 
-                                        className="absolute w-9 h-9 border-2 border-red-500/80 bg-red-500/10 rounded-full shadow-[0_0_20px_#ef4444] z-10 transition-all duration-500 pointer-events-none"
-                                        style={{ left: `${prediction[0] * 100}%`, top: `${prediction[1] * 100}%`, transform: 'translate(-50%, -50%)' }}
+                                {showDetectionOverlays && detections.map((detection, index) => (
+                                    <div
+                                        key={`${index}-${detection.class_id}-${detection.confidence}`}
+                                        className="absolute border-2 border-red-500/80 bg-red-500/10 shadow-[0_0_20px_rgba(239,68,68,0.35)] z-10 transition-all duration-500 pointer-events-none"
+                                        style={{
+                                            left: `${(detection.x_center - detection.width / 2) * 100}%`,
+                                            top: `${(detection.y_center - detection.height / 2) * 100}%`,
+                                            width: `${detection.width * 100}%`,
+                                            height: `${detection.height * 100}%`,
+                                        }}
                                     >
-                                        <div className="absolute top-1/2 left-1/2 w-1.5 h-1.5 bg-white rounded-full -translate-x-1/2 -translate-y-1/2 shadow-lg shadow-black group-hover:bg-red-200"></div>
-                                        <div className="absolute top-1/2 left-1/2 w-full h-[1px] bg-red-500/50 -translate-x-1/2 -translate-y-1/2"></div>
-                                        <div className="absolute top-1/2 left-1/2 w-[1px] h-full bg-red-500/50 -translate-x-1/2 -translate-y-1/2"></div>
+                                        <div className="absolute -top-6 left-0 px-2 py-0.5 bg-red-500/90 text-[10px] font-bold uppercase tracking-wider text-white rounded">
+                                            {detection.class_name} {(detection.confidence * 100).toFixed(0)}%
+                                        </div>
                                     </div>
-                                )}
+                                ))}
                             </div>
                         </div>
                     )}

@@ -139,6 +139,9 @@ class Label:
     blur_score: float
     image_hash: str
     filename: str
+    class_id: int = 0
+    class_name: str = "enemy"
+    bbox_source: str = "measured"
 
 
 # ============================== REGION DETECTION ==============================
@@ -487,8 +490,9 @@ class BiasAwareAugmentation:
         with open(self.output_csv, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
-                'filename', 'x_norm', 'y_norm', 'video_id', 'frame_idx',
-                'timestamp', 'confidence', 'auto_labeled', 'aug_type'
+                'filename', 'class_id', 'class_name', 'has_enemy', 'x_center',
+                'y_center', 'width', 'height', 'video_id', 'frame_idx',
+                'timestamp', 'confidence', 'auto_labeled', 'bbox_source', 'aug_type'
             ])
     
     def _load_labels(self) -> List[Label]:
@@ -499,11 +503,21 @@ class BiasAwareAugmentation:
             reader = csv.DictReader(f)
             for row in reader:
                 # All rows in the enhanced CSV are high-confidence enemy locations
+                x_center = float(row.get('x_center', row.get('x_norm', 0.5)))
+                y_center = float(row.get('y_center', row.get('y_norm', 0.5)))
+                width_raw = row.get('width')
+                height_raw = row.get('height')
+                width = float(width_raw) if width_raw not in (None, '') else 0.08
+                height = float(height_raw) if height_raw not in (None, '') else 0.18
+                bbox_source = row.get(
+                    'bbox_source',
+                    'synthetic_from_point' if width_raw in (None, '') or height_raw in (None, '') else 'measured'
+                )
                 bbox = BBox(
-                    x_center=float(row['x_norm']),
-                    y_center=float(row['y_norm']),
-                    width=0.05,  # Dummy width for augmentation functions
-                    height=0.1   # Dummy height for augmentation functions
+                    x_center=x_center,
+                    y_center=y_center,
+                    width=width,
+                    height=height
                 )
                 
                 label = Label(
@@ -517,7 +531,10 @@ class BiasAwareAugmentation:
                     multiple_targets=0,
                     blur_score=0.0,
                     image_hash='',
-                    filename=row['filename']
+                    filename=row['filename'],
+                    class_id=int(row.get('class_id', 0)),
+                    class_name=row.get('class_name', 'enemy'),
+                    bbox_source=bbox_source
                 )
                 
                 # Store the extra original fields so we can write them back out
@@ -544,19 +561,36 @@ class BiasAwareAugmentation:
         img_path = self.output_dir / "images" / new_filename
         img_path.parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(img_path), image)
+
+        label_path = self.output_dir / "labels" / f"{Path(new_filename).stem}.txt"
+        label_path.parent.mkdir(parents=True, exist_ok=True)
+        if bbox:
+            label_path.write_text(
+                f"{label.class_id} {bbox.x_center:.6f} {bbox.y_center:.6f} "
+                f"{bbox.width:.6f} {bbox.height:.6f}\n",
+                encoding='utf-8'
+            )
+        else:
+            label_path.write_text("", encoding='utf-8')
         
         # Write CSV row
         with open(self.output_csv, 'a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
                 new_filename,
+                label.class_id,
+                label.class_name,
+                label.has_enemy,
                 f"{bbox.x_center:.6f}" if bbox else "0",
                 f"{bbox.y_center:.6f}" if bbox else "0",
+                f"{bbox.width:.6f}" if bbox else "0",
+                f"{bbox.height:.6f}" if bbox else "0",
                 label.video_id,
                 label.frame_index,
                 getattr(label, 'timestamp', 0.0),
                 f"{label.confidence:.4f}",
                 getattr(label, 'auto_labeled', 'True'),
+                label.bbox_source,
                 aug_type
             ])
         

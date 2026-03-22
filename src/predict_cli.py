@@ -1,100 +1,122 @@
-import sys
-import json
-import torch
-from torchvision import transforms
-from PIL import Image, ImageDraw
-import os
-import warnings
 import argparse
+import json
+import sys
+import warnings
+from pathlib import Path
 
-# Suppress warnings that might corrupt JSON output
+import cv2
+
 warnings.filterwarnings("ignore")
 
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
-# Add project root to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from src.model import EnemyLocalizationModel
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from ultralytics import YOLO
+
+
+def _box_confidence(box) -> float:
+    confidence = getattr(box, "conf", None)
+    if confidence is None:
+        return 0.0
+    if hasattr(confidence, "numel") and confidence.numel() > 0:
+        return float(confidence.flatten()[0].item())
+    return float(confidence)
+
+
+def _box_class_id(box) -> int:
+    class_id = getattr(box, "cls", None)
+    if class_id is None:
+        return 0
+    if hasattr(class_id, "numel") and class_id.numel() > 0:
+        return int(class_id.flatten()[0].item())
+    return int(class_id)
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Run inference on a single image.")
+    parser = argparse.ArgumentParser(description="Run object detection on a single image.")
     parser.add_argument("image_path", help="Path to the input image.")
-    parser.add_argument("--save_path", help="Path to save the result image with a red dot.", default=None)
+    parser.add_argument("--model", default=str(PROJECT_ROOT / "models" / "best_model.pt"),
+                        help="Path to trained detector weights.")
+    parser.add_argument("--save_path", default=None,
+                        help="Optional path to save the rendered detection image.")
+    parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold.")
+    parser.add_argument("--max_det", type=int, default=10, help="Maximum detections to return.")
     args = parser.parse_args()
 
-    image_path = args.image_path
+    image_path = Path(args.image_path)
+    model_path = Path(args.model)
 
-    if not os.path.exists(image_path):
+    if not image_path.exists():
         print(json.dumps({"error": f"Image not found: {image_path}"}))
         sys.exit(1)
 
+    if not model_path.exists():
+        print(json.dumps({"error": f"Model not found at {model_path}. Please train the detector first."}))
+        sys.exit(1)
+
     try:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model_path = os.path.join(os.path.dirname(__file__), "..", "models", "best_model.pth")
-        
-        if not os.path.exists(model_path):
-            print(json.dumps({"error": f"Model not found at {model_path}. Please complete training first."}))
-            sys.exit(1)
+        detector = YOLO(str(model_path))
+        result = detector.predict(
+            source=str(image_path),
+            conf=args.conf,
+            max_det=args.max_det,
+            verbose=False,
+        )[0]
 
-        # Initialize and load model
-        model = EnemyLocalizationModel(pretrained=False).to(device)
-        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
-        
-        if "model_state_dict" in checkpoint:
-            model.load_state_dict(checkpoint["model_state_dict"])
+        detections = []
+        image_width, image_height = result.orig_shape[1], result.orig_shape[0]
+        if isinstance(result.names, dict):
+            names = result.names
+        elif isinstance(result.names, (list, tuple)):
+            names = {idx: name for idx, name in enumerate(result.names)}
         else:
-            model.load_state_dict(checkpoint)
-        
-        model.eval()
+            names = {}
 
-        # Image preprocessing
-        original_image = Image.open(image_path).convert("RGB")
-        img_w, img_h = original_image.size
-        
-        transform = transforms.Compose([
-            transforms.Resize((256, 256)),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225]
-            ),
-        ])
-        
-        input_tensor = transform(original_image).unsqueeze(0).to(device)
+        for box in result.boxes:
+            x1, y1, x2, y2 = [float(value) for value in box.xyxy[0].tolist()]
+            width = max(0.0, x2 - x1)
+            height = max(0.0, y2 - y1)
+            x_center = x1 + width / 2
+            y_center = y1 + height / 2
+            class_id = _box_class_id(box)
+            detections.append({
+                "class_id": class_id,
+                "class_name": names.get(class_id, str(class_id)),
+                "confidence": _box_confidence(box),
+                "bbox_xyxy": [x1, y1, x2, y2],
+                "x_center": x_center / image_width,
+                "y_center": y_center / image_height,
+                "width": width / image_width,
+                "height": height / image_height,
+            })
 
-        # Run inference
-        with torch.no_grad():
-            output = model(input_tensor)
-            pred_x = float(output[0, 0].item())
-            pred_y = float(output[0, 1].item())
+        detections.sort(key=lambda item: item["confidence"], reverse=True)
+        top_detection = detections[0] if detections else None
 
-        # Save result image with red dot if requested
         saved_image_path = None
         if args.save_path:
-            draw = ImageDraw.Draw(original_image)
-            radius = max(5, int(min(img_w, img_h) * 0.01)) # 1% of the smallest dimension or at least 5px
-            
-            # Map normalized coordinates back to pixel space
-            px = pred_x * img_w
-            py = pred_y * img_h
-            
-            # Draw red circle
-            draw.ellipse([px - radius, py - radius, px + radius, py + radius], fill="red", outline="white", width=2)
-            
-            original_image.save(args.save_path)
-            saved_image_path = os.path.abspath(args.save_path)
+            rendered = result.plot()
+            save_path = Path(args.save_path)
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(save_path), rendered)
+            saved_image_path = str(save_path.resolve())
 
-        # Output explicit JSON for the React App to parse
         print(json.dumps({
-            "prediction": [pred_x, pred_y],
+            "detections": detections,
+            "count": len(detections),
+            "top_detection": top_detection,
+            "prediction": [top_detection["x_center"], top_detection["y_center"]] if top_detection else None,
             "truth": None,
-            "saved_image_path": saved_image_path
+            "saved_image_path": saved_image_path,
+            "model_path": str(model_path.resolve()),
         }))
-
-    except Exception as e:
-        print(json.dumps({"error": str(e)}))
+    except Exception as exc:
+        print(json.dumps({"error": str(exc)}))
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
