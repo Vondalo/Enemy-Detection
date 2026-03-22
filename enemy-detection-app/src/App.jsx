@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Minus, Square, Copy, Target, Gamepad2, MonitorPlay, Database, BrainCircuit, BarChart3, ChevronRight, ChevronLeft, ScanEye, Terminal, Layers, Cpu, CheckCircle, CloudDownload, Trash2 } from 'lucide-react';
+import { X, Minus, Square, Copy, Target, Gamepad2, MonitorPlay, Database, BrainCircuit, BarChart3, ChevronRight, ChevronLeft, ScanEye, Terminal, Layers, Cpu, CheckCircle, CloudDownload, Trash2, Image as ImageIcon } from 'lucide-react';
 import './index.css';
+import CollectorWorkspace from './CollectorWorkspace';
+import DatasetViewerWorkspace from './DatasetViewerWorkspace';
 
 const TitleBar = () => (
     <div className="h-8 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 drag select-none">
@@ -31,6 +33,47 @@ const TitleBar = () => (
     </div>
 );
 
+const DETECTOR_CHOICES = [
+    {
+        key: 'yolov8n',
+        label: 'YOLOv8n',
+        summary: 'Fastest option for quick iteration and weaker GPUs.',
+    },
+    {
+        key: 'yolov8s',
+        label: 'YOLOv8s',
+        summary: 'Better small-target recall with a moderate speed cost.',
+    },
+    {
+        key: 'yolov8m',
+        label: 'YOLOv8m',
+        summary: 'Stronger capacity for harder scenes if you have the VRAM.',
+    },
+    {
+        key: 'rtdetr-l',
+        label: 'RT-DETR-L',
+        summary: 'Heavier transformer detector for stronger baseline comparisons.',
+    },
+];
+
+const getDetectionChrome = (className) => {
+    const normalized = String(className || '').toLowerCase();
+    if (normalized === 'player') {
+        return {
+            border: 'border-sky-400/90',
+            fill: 'bg-sky-500/10',
+            glow: 'shadow-[0_0_20px_rgba(14,165,233,0.35)]',
+            badge: 'bg-sky-500/90',
+        };
+    }
+    return {
+        border: 'border-rose-500/90',
+        fill: 'bg-rose-500/10',
+        glow: 'shadow-[0_0_20px_rgba(244,63,94,0.35)]',
+        badge: 'bg-rose-500/90',
+    };
+};
+
 const Presentation = () => {
     const [currentSlide, setCurrentSlide] = useState(0);
     const [logs, setLogs] = useState([]);
@@ -56,12 +99,24 @@ const Presentation = () => {
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [isFixing, setIsFixing] = useState(false);
     const [trainEpochs, setTrainEpochs] = useState(10);
+    const [trainBatchSize, setTrainBatchSize] = useState(16);
+    const [trainImageSize, setTrainImageSize] = useState(640);
+    const [trainDeviceMode, setTrainDeviceMode] = useState('cuda');
+    const [trainModel, setTrainModel] = useState('yolov8n');
 
     // Data Collector State
     const [videos, setVideos] = useState([]);
     const [selectedVideo, setSelectedVideo] = useState('');
     const [collectionName, setCollectionName] = useState('');
     const [augmentationName, setAugmentationName] = useState('');
+    const [collectorSession, setCollectorSession] = useState(null);
+    const isCollectorWorkspaceActive = currentSlide === 1 && Boolean(collectorSession);
+
+    const appendLog = (...entries) => {
+        const nextEntries = entries.flat().filter(Boolean);
+        if (nextEntries.length === 0) return;
+        setLogs(prev => [...prev, ...nextEntries]);
+    };
 
     const handleFetchDatasets = async () => {
         const data = await window.electronAPI.listDatasets();
@@ -76,7 +131,9 @@ const Presentation = () => {
         const data = await window.electronAPI.listVideos();
         setVideos(data);
         if (data.length > 0 && !selectedVideo) {
-            setSelectedVideo(data[0]);
+            setSelectedVideo(data[0].name);
+        } else if (data.length === 0) {
+            setSelectedVideo('');
         }
     };
 
@@ -131,15 +188,34 @@ const Presentation = () => {
         if (!videoName || isRunning) return;
         setIsRunning(true);
         const finalName = collectionName.trim() || `collected_${new Date().toISOString().split('T')[0]}`;
-        setLogs([`> Starting data collection for video: ${videoName}...`, `> Dataset Name: ${finalName}`, `> Mode: Automated (Auto-Skip Low Confidence)`]);
-        const result = await window.electronAPI.runDataCollection(videoName, finalName);
+        setLogs([
+            `> Opening in-app data collection for video: ${videoName}...`,
+            `> Dataset Name: ${finalName}`,
+            `> Mode: Manual multi-class annotation inside Electron`,
+            `> Choose enemy or player, draw boxes, and step through frames with the keyboard.`
+        ]);
+        const result = await window.electronAPI.startManualCollection(videoName, finalName);
         if (result.success) {
-            setLogs(prev => [...prev, `\n[Success] Data collection complete! Frames saved to data_sets/${finalName}`, `[System] You can now analyze this in the Dataset Manager.`]);
-            handleFetchDatasets();
+            setCollectorSession(result);
+            appendLog(`[Ready] Manual annotator loaded inside the app for ${result.videoName}.`);
+            appendLog(`[Hint] Press 1 for enemy, 2 for player, Shift+Enter to add another box on the same frame, and Enter to save and move on.`);
         } else {
-            setLogs(prev => [...prev, `\n[Error] ${result.error}`]);
+            appendLog(`\n[Error] ${result.error}`);
         }
         setIsRunning(false);
+    };
+
+    const handleCollectorSessionUpdate = (updates) => {
+        setCollectorSession(prev => prev ? { ...prev, ...updates } : prev);
+    };
+
+    const handleCollectorClosed = (result) => {
+        if (result?.success && collectorSession) {
+            appendLog(`\n[Success] Manual collection complete. Saved ${result.savedCount} annotation(s) to data_sets/${collectorSession.datasetName}.`);
+            appendLog('[System] The dataset is ready for review in Dataset Manager.');
+        }
+        setCollectorSession(null);
+        handleFetchDatasets();
     };
 
     const handleRunAugmentation = async () => {
@@ -194,9 +270,9 @@ const Presentation = () => {
                 setTruth(result.truth);
                 if (result.top_detection) {
                     const top = result.top_detection;
-                    setLogs(prev => [...prev, `[Success] Found ${result.count} detection(s). Top box: ${(top.confidence * 100).toFixed(1)}% @ [${top.x_center.toFixed(3)}, ${top.y_center.toFixed(3)}]`]);
+                    setLogs(prev => [...prev, `[Success] Found ${result.count} detection(s). Top detection: ${top.class_name} ${(top.confidence * 100).toFixed(1)}% @ [${top.x_center.toFixed(3)}, ${top.y_center.toFixed(3)}]`]);
                 } else {
-                    setLogs(prev => [...prev, `[Success] No enemy detections above threshold.`]);
+                    setLogs(prev => [...prev, `[Success] No detections above threshold.`]);
                 }
                 if (result.saved_image_path) {
                     setLogs(prev => [...prev, `[System] Stamped image saved to: ${result.saved_image_path}`]);
@@ -241,10 +317,26 @@ const Presentation = () => {
     const handleTrainOnDataset = async () => {
         if (!selectedDataset || !selectedCsv) return;
         setIsRunning(true);
-        setLogs([`> Starting training on dataset: ${selectedDataset.name}`, `> CSV: ${selectedCsv}`, `> Epochs: ${trainEpochs}`]);
-        const result = await window.electronAPI.runTraining(selectedDataset.path, selectedCsv, trainEpochs);
+        setLogs([
+            `> Starting training on dataset: ${selectedDataset.name}`,
+            `> CSV: ${selectedCsv}`,
+            `> Model Basis: ${trainModel}`,
+            `> Epochs: ${trainEpochs}`,
+            `> Batch Size: ${trainBatchSize}`,
+            `> Image Size: ${trainImageSize}`,
+            `> Device Mode: ${trainDeviceMode === 'cuda' ? 'CUDA / NVIDIA GPU only' : trainDeviceMode === 'auto' ? 'Auto (prefer CUDA)' : 'CPU only'}`,
+        ]);
+        const result = await window.electronAPI.runTraining({
+            datasetPath: selectedDataset.path,
+            csvName: selectedCsv,
+            epochs: trainEpochs,
+            batchSize: trainBatchSize,
+            imageSize: trainImageSize,
+            deviceMode: trainDeviceMode,
+            modelChoice: trainModel,
+        });
         if (result.success) {
-            setLogs(prev => [...prev, `\n[Success] Training completed successfully!`]);
+            setLogs(prev => [...prev, `\n[Success] Training completed successfully with ${trainModel}.`]);
         } else {
             setLogs(prev => [...prev, `\n[Error] ${result.error}`]);
         }
@@ -265,8 +357,8 @@ const Presentation = () => {
         return () => window.removeEventListener('resize', updateImageDims);
     }, []);
 
-    const renderTerminal = () => (
-        <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-2xl mt-6 flex flex-col h-64 font-mono text-sm max-h-96">
+    const renderTerminal = (compact = false) => (
+        <div className={`bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-2xl flex flex-col font-mono text-sm ${compact ? 'mt-4 h-40 max-h-40' : 'mt-6 h-64 max-h-96'}`}>
             <div className="bg-slate-900 border-b border-slate-800 px-4 py-2 flex items-center justify-between">
                 <div className="flex gap-2.5 items-center">
                     <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
@@ -324,52 +416,97 @@ const Presentation = () => {
         {
             id: 'collector',
             title: "Data Collector",
-            subtitle: "Select and process gameplay videos",
+            subtitle: "Label gameplay frames directly inside the app",
             icon: <MonitorPlay size={24} />,
             content: (
                 <div className="flex flex-col h-full space-y-6">
-                    <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 flex flex-col gap-6">
-                        <div className="flex flex-col gap-2">
-                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Video Source</label>
-                            <div className="flex gap-4">
-                                <select 
-                                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
-                                    value={selectedVideo}
-                                    onChange={(e) => setSelectedVideo(e.target.value)}
-                                >
-                                    {videos.length === 0 && <option>No videos found in src/videos</option>}
-                                    {videos.map(v => <option key={v} value={v}>{v}</option>)}
-                                </select>
-                                <button 
-                                    onClick={handleFetchVideos}
-                                    className="p-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg transition"
-                                    title="Refresh List"
-                                >
-                                    <CloudDownload size={20} />
-                                </button>
+                    {collectorSession ? (
+                        <CollectorWorkspace
+                            session={collectorSession}
+                            appendLog={appendLog}
+                            onClose={handleCollectorClosed}
+                            onSessionUpdate={handleCollectorSessionUpdate}
+                        />
+                    ) : (
+                        <div className="flex flex-col gap-6">
+                            <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_1fr] gap-6">
+                                <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 flex flex-col gap-6">
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Video Source</label>
+                                        <div className="flex gap-4">
+                                            <select 
+                                                className="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                                value={selectedVideo}
+                                                onChange={(e) => setSelectedVideo(e.target.value)}
+                                            >
+                                                {videos.length === 0 && <option value="">No videos found in src/videos</option>}
+                                                {videos.map((video) => (
+                                                    <option key={video.name} value={video.name}>{video.name}</option>
+                                                ))}
+                                            </select>
+                                            <button 
+                                                onClick={handleFetchVideos}
+                                                className="p-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg transition"
+                                                title="Refresh List"
+                                            >
+                                                <CloudDownload size={20} />
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">New Dataset Name</label>
+                                        <input 
+                                            type="text"
+                                            placeholder="e.g. desert_outpost_labels"
+                                            className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                            value={collectionName}
+                                            onChange={(e) => setCollectionName(e.target.value)}
+                                        />
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="bg-slate-900/70 border border-slate-700 rounded-xl p-4">
+                                            <div className="text-[11px] font-black uppercase tracking-[0.24em] text-sky-400 mb-2">Manual Flow</div>
+                                            <div className="text-sm text-slate-300 space-y-2">
+                                                <p>Open the annotator inside the Electron app.</p>
+                                                <p>Choose <span className="text-white font-semibold">enemy</span> for opponents and <span className="text-white font-semibold">player</span> for your own character.</p>
+                                                <p>Drag a bounding box around the selected target, or single-click for a quick centered square box.</p>
+                                                <p>Save useful frames and stack multiple labeled characters on the same frame without leaving the app.</p>
+                                            </div>
+                                        </div>
+                                        <div className="bg-slate-900/70 border border-slate-700 rounded-xl p-4">
+                                            <div className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-400 mb-2">Quick Controls</div>
+                                            <div className="text-sm text-slate-300 space-y-2">
+                                                <p><span className="text-white font-semibold">1</span> selects enemy and <span className="text-white font-semibold">2</span> selects player.</p>
+                                                <p><span className="text-white font-semibold">Shift + Enter</span> adds another labeled box on the same frame, and <span className="text-white font-semibold">Enter</span> saves and advances.</p>
+                                                <p><span className="text-white font-semibold">Arrow keys</span> move frame by frame, and <span className="text-white font-semibold">Shift + Arrows</span> jumps further.</p>
+                                                <p><span className="text-white font-semibold">D</span> duplicates the last saved box and <span className="text-white font-semibold">S</span> skips the current frame.</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <button 
+                                        onClick={() => handleRunDataCollection(selectedVideo)}
+                                        disabled={isRunning || !selectedVideo}
+                                        className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-blue-900/20 text-sm font-bold flex justify-center items-center gap-2"
+                                    >
+                                        Open In-App Annotator <MonitorPlay size={18}/>
+                                    </button>
+                                </div>
+
+                                <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-6 flex flex-col gap-4">
+                                    <div className="text-[11px] font-black uppercase tracking-[0.24em] text-violet-400">Why This Works Better</div>
+                                    <div className="text-sm text-slate-300 space-y-3">
+                                        <p>Bounding boxes are now drawn directly where you can see them, so there is no hidden OpenCV window and no guessing what hotkeys do.</p>
+                                        <p>The annotator now supports explicit player-versus-enemy labeling, which is much better for a third-person game where your own avatar is always visible.</p>
+                                        <p>You also get timeline scrubbing, adjustable frame stepping, duplicate-last-box, and mixed multi-character labeling on the same frame.</p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-
-                        <div className="flex flex-col gap-2">
-                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">New Dataset Name</label>
-                            <input 
-                                type="text"
-                                placeholder="e.g. desert_outpost_labels"
-                                className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
-                                value={collectionName}
-                                onChange={(e) => setCollectionName(e.target.value)}
-                            />
-                        </div>
-
-                        <button 
-                            onClick={() => handleRunDataCollection(selectedVideo)}
-                            disabled={isRunning || !selectedVideo}
-                            className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-blue-900/20 text-sm font-bold flex justify-center items-center gap-2"
-                        >
-                            Start Data Collection <MonitorPlay size={18}/>
-                        </button>
-                    </div>
-                    {renderTerminal()}
+                    )}
+                    {renderTerminal(Boolean(collectorSession))}
                 </div>
             )
         },
@@ -527,6 +664,57 @@ const Presentation = () => {
             )
         },
         {
+            id: 'viewer',
+            title: "Data Viewer",
+            subtitle: "Browse, fix, and delete labeled images",
+            icon: <ImageIcon size={24} />,
+            content: (
+                <div className="flex flex-col h-full space-y-6">
+                    <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 flex flex-col gap-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="flex flex-col gap-2">
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Dataset</label>
+                                <select
+                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                    value={selectedDataset?.name || ''}
+                                    onChange={(e) => {
+                                        const ds = datasets.find(d => d.name === e.target.value);
+                                        setSelectedDataset(ds);
+                                        setSelectedCsv(ds?.csvs[0] || '');
+                                    }}
+                                >
+                                    {datasets.length === 0 && <option value="">No datasets found</option>}
+                                    {datasets.map(ds => <option key={ds.name} value={ds.name}>{ds.name}</option>)}
+                                </select>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">CSV Labels</label>
+                                <select
+                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                    value={selectedCsv}
+                                    onChange={(e) => setSelectedCsv(e.target.value)}
+                                >
+                                    {selectedDataset?.csvs?.map(csv => <option key={csv} value={csv}>{csv}</option>)}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 leading-relaxed">
+                            This viewer opens every image in the selected dataset so you can inspect labels, move or resize existing boxes, add new player or enemy boxes, save fixes back into the YOLO files and CSV, or delete bad images entirely.
+                        </div>
+                    </div>
+
+                    <DatasetViewerWorkspace
+                        dataset={selectedDataset}
+                        csvName={selectedCsv}
+                        appendLog={appendLog}
+                        onDatasetChanged={handleFetchDatasets}
+                    />
+                    {renderTerminal()}
+                </div>
+            )
+        },
+        {
             id: 'train',
             title: "Model Training",
             subtitle: "Train on selected dataset",
@@ -535,28 +723,122 @@ const Presentation = () => {
                 <div className="flex flex-col h-full space-y-6">
                     <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 flex flex-col gap-6">
                         <div className="flex flex-col gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Training Dataset</label>
+                                    <select
+                                        className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
+                                        value={selectedDataset?.name || ''}
+                                        onChange={(e) => {
+                                            const ds = datasets.find(d => d.name === e.target.value);
+                                            setSelectedDataset(ds);
+                                            setSelectedCsv(ds?.csvs?.[0] || '');
+                                        }}
+                                    >
+                                        {datasets.length === 0 && <option value="">No datasets found</option>}
+                                        {datasets.map(ds => <option key={ds.name} value={ds.name}>{ds.name}</option>)}
+                                    </select>
+                                </div>
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Training CSV</label>
+                                    <select
+                                        className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
+                                        value={selectedCsv}
+                                        onChange={(e) => setSelectedCsv(e.target.value)}
+                                    >
+                                        {selectedDataset?.csvs?.length
+                                            ? selectedDataset.csvs.map(csv => <option key={csv} value={csv}>{csv}</option>)
+                                            : <option value="">No CSV files found</option>}
+                                    </select>
+                                </div>
+                            </div>
+
                             <div className="flex items-center gap-4 text-sm">
                                 <span className="text-rose-400 font-bold whitespace-nowrap">Training Source:</span>
                                 <div className="flex-1 px-3 py-1.5 bg-slate-900 rounded border border-slate-700 text-slate-300 font-mono text-xs overflow-hidden text-ellipsis italic">
-                                    {selectedDataset ? `${selectedDataset.name} -> ${selectedCsv}` : "None Selected (Go to Dataset Manager)"}
+                                    {selectedDataset ? `${selectedDataset.name} -> ${selectedCsv || 'No CSV selected'}` : "None Selected"}
                                 </div>
                             </div>
                             
-                            <div className="flex items-center gap-6">
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Model Basis</label>
+                                    <select
+                                        value={trainModel}
+                                        onChange={(e) => setTrainModel(e.target.value)}
+                                        className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
+                                    >
+                                        {DETECTOR_CHOICES.map((choice) => (
+                                            <option key={choice.key} value={choice.key}>{choice.label}</option>
+                                        ))}
+                                    </select>
+                                    <p className="text-xs text-slate-500 leading-relaxed">
+                                        {DETECTOR_CHOICES.find((choice) => choice.key === trainModel)?.summary}
+                                    </p>
+                                </div>
                                 <div className="flex flex-col gap-1.5 flex-1">
                                     <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Epochs Count</label>
                                     <input 
                                         type="number" 
                                         value={trainEpochs} 
-                                        onChange={(e) => setTrainEpochs(parseInt(e.target.value))}
+                                        min="1"
+                                        max="1000"
+                                        onChange={(e) => setTrainEpochs(Math.max(1, parseInt(e.target.value || '10', 10) || 10))}
                                         className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
                                     />
                                 </div>
-                                <div className="flex flex-col gap-1.5 flex-1 opacity-50">
+                                <div className="flex flex-col gap-1.5 flex-1">
                                     <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Batch Size</label>
-                                    <input type="number" value="16" readOnly className="bg-slate-950 border border-slate-800 rounded-lg p-2 text-sm text-slate-500 cursor-not-allowed" />
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="512"
+                                        value={trainBatchSize}
+                                        onChange={(e) => setTrainBatchSize(Math.max(1, parseInt(e.target.value || '16', 10) || 16))}
+                                        className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-1.5 flex-1">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Image Size</label>
+                                    <input
+                                        type="number"
+                                        min="320"
+                                        step="32"
+                                        value={trainImageSize}
+                                        onChange={(e) => setTrainImageSize(Math.max(320, parseInt(e.target.value || '640', 10) || 640))}
+                                        className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
+                                    />
                                 </div>
                             </div>
+
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Training Device</label>
+                                    <select
+                                        value={trainDeviceMode}
+                                        onChange={(e) => setTrainDeviceMode(e.target.value)}
+                                        className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
+                                    >
+                                        <option value="cuda">CUDA / NVIDIA GPU only</option>
+                                        <option value="auto">Auto (prefer CUDA, fallback to CPU)</option>
+                                        <option value="cpu">CPU only</option>
+                                    </select>
+                                    <p className="text-xs text-slate-500 leading-relaxed">
+                                        CUDA mode will fail fast if no NVIDIA-capable PyTorch GPU is available, which is safer than silently training on CPU.
+                                    </p>
+                                </div>
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">CUDA Notes</label>
+                                    <div className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-xs text-slate-400 leading-relaxed">
+                                        Training logs will print the chosen device, GPU name, VRAM, CUDA version, and whether AMP / TF32 acceleration was enabled.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 leading-relaxed">
+                            Training now uses the selected detector basis directly from the app, passes your batch size and image size through to Python, and lets the trainer create its own train/validation split from the chosen CSV.
+                            That avoids leaking the same cleaned images into both train and validation, while making CUDA usage explicit instead of hidden.
                         </div>
 
                         <button 
@@ -586,7 +868,7 @@ const Presentation = () => {
                             onClick={handlePredict} 
                             disabled={!imagePath || predicting || isRunning}
                             className="px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-blue-900/20 text-sm font-bold"
-                        >Detect Enemy</button>
+                        >Detect Characters</button>
                     </div>
 
                     {!imagePath ? (
@@ -602,22 +884,25 @@ const Presentation = () => {
                                     alt="Input" 
                                     className="max-w-full max-h-[45vh] object-contain block filter brightness-110 contrast-125 saturate-150 rounded" 
                                 />
-                                {showDetectionOverlays && detections.map((detection, index) => (
-                                    <div
-                                        key={`${index}-${detection.class_id}-${detection.confidence}`}
-                                        className="absolute border-2 border-red-500/80 bg-red-500/10 shadow-[0_0_20px_rgba(239,68,68,0.35)] z-10 transition-all duration-500 pointer-events-none"
-                                        style={{
-                                            left: `${(detection.x_center - detection.width / 2) * 100}%`,
-                                            top: `${(detection.y_center - detection.height / 2) * 100}%`,
-                                            width: `${detection.width * 100}%`,
-                                            height: `${detection.height * 100}%`,
-                                        }}
-                                    >
-                                        <div className="absolute -top-6 left-0 px-2 py-0.5 bg-red-500/90 text-[10px] font-bold uppercase tracking-wider text-white rounded">
-                                            {detection.class_name} {(detection.confidence * 100).toFixed(0)}%
+                                {showDetectionOverlays && detections.map((detection, index) => {
+                                    const chrome = getDetectionChrome(detection.class_name);
+                                    return (
+                                        <div
+                                            key={`${index}-${detection.class_id}-${detection.confidence}`}
+                                            className={`absolute border-2 ${chrome.border} ${chrome.fill} ${chrome.glow} z-10 transition-all duration-500 pointer-events-none`}
+                                            style={{
+                                                left: `${(detection.x_center - detection.width / 2) * 100}%`,
+                                                top: `${(detection.y_center - detection.height / 2) * 100}%`,
+                                                width: `${detection.width * 100}%`,
+                                                height: `${detection.height * 100}%`,
+                                            }}
+                                        >
+                                            <div className={`absolute -top-6 left-0 px-2 py-0.5 ${chrome.badge} text-[10px] font-bold uppercase tracking-wider text-white rounded`}>
+                                                {detection.class_name} {(detection.confidence * 100).toFixed(0)}%
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     )}
@@ -642,7 +927,7 @@ const Presentation = () => {
     ];
 
     return (
-        <div className="flex flex-col h-screen w-full bg-slate-950 text-slate-200 overflow-hidden font-sans selection:bg-blue-500/30 drag border border-slate-800">
+        <div className="flex flex-col h-screen w-full bg-slate-950 text-slate-200 overflow-hidden font-sans selection:bg-blue-500/30 border border-slate-800">
             <TitleBar />
             
             {/* Header/Progress */}
@@ -653,10 +938,10 @@ const Presentation = () => {
                 />
             </div>
 
-            <div className="flex-1 flex flex-col md:flex-row max-w-7xl mx-auto w-full p-4 md:p-8 gap-6 h-full overflow-hidden">
+            <div className={`flex-1 flex flex-col md:flex-row w-full ${isCollectorWorkspaceActive ? 'p-2 md:p-3 lg:p-4 gap-4' : 'p-4 md:p-6 lg:p-8 gap-6'} h-full overflow-hidden`}>
                 
                 {/* Sidebar Navigation */}
-                <div className="hidden md:flex flex-col w-64 space-y-2 pr-4 border-r border-slate-800/50 no-drag">
+                {!isCollectorWorkspaceActive && <div className="hidden md:flex flex-col w-64 space-y-2 pr-4 border-r border-slate-800/50 no-drag">
                     <div className="mb-6 px-4">
                         <h1 className="text-lg font-black tracking-tight text-white mb-1">DSAI Dashboard</h1>
                         <p className="text-xs font-mono text-slate-500">v1.1.0-alpha</p>
@@ -675,20 +960,20 @@ const Presentation = () => {
                             {slide.title}
                         </button>
                     ))}
-                </div>
+                </div>}
 
                 {/* Main Content Area */}
                 <div className="flex-1 flex flex-col relative bg-slate-950/50 rounded-2xl md:border border-slate-800/50 shadow-2xl overflow-hidden h-full no-drag">
-                    <div className="p-8 pb-0 animate-fade-in-down border-b border-transparent">
+                    <div className={`${isCollectorWorkspaceActive ? 'p-5 md:p-6 pb-0' : 'p-8 pb-0'} animate-fade-in-down border-b border-transparent`}>
                         <div className="flex items-center gap-3 text-blue-400 mb-2">
                             {slides[currentSlide].icon}
                             <span className="text-xs font-mono uppercase tracking-widest opacity-75">Control Surface</span>
                         </div>
-                        <h2 className="text-3xl font-bold text-white">{slides[currentSlide].title}</h2>
+                        <h2 className={`${isCollectorWorkspaceActive ? 'text-2xl md:text-3xl' : 'text-3xl'} font-bold text-white`}>{slides[currentSlide].title}</h2>
                         <p className="text-slate-400 mt-1">{slides[currentSlide].subtitle}</p>
                     </div>
 
-                    <div className="flex-1 p-8 overflow-y-auto w-full max-h-full min-h-0">
+                    <div className={`flex-1 ${isCollectorWorkspaceActive ? 'p-4 md:p-5 lg:p-6' : 'p-8'} overflow-y-auto w-full max-h-full min-h-0`}>
                         <div className="h-full animate-fade-in">
                             {slides[currentSlide].content}
                         </div>

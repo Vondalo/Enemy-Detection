@@ -1,0 +1,39 @@
+{
+  "chosen_model": "C:\\Users\\Eray\\Documents\\GitHub\\Enemy-Detection\\yolov8n.pt",
+  "best_weights": "C:\\Users\\Eray\\Documents\\GitHub\\Enemy-Detection\\tmp\\smoke_train\\runs\\smoke_cuda\\weights\\best.pt",
+  "stable_best_model": "C:\\Users\\Eray\\Documents\\GitHub\\Enemy-Detection\\tmp\\smoke_train\\best_model.pt",
+  "dataset": {
+    "dataset_mode": "generated_from_csv",
+    "data_yaml": "C:\\Users\\Eray\\Documents\\GitHub\\Enemy-Detection\\tmp\\smoke_train\\prepared_dataset\\data.yaml",
+    "class_names": [
+      "enemy",
+      "player"
+    ],
+    "train_annotations": 155,
+    "val_annotations": 39,
+    "train_images": 99,
+    "val_images": 34,
+    "train_video_ids": [
+      "mixed"
+    ],
+    "val_video_ids": [
+      "mixed"
+    ],
+    "bbox_sources": {
+      "manual_box": 194
+    }
+  },
+  "epochs": 1,
+  "batch_size": 1,
+  "imgsz": 320,
+  "requested_device_mode": "cuda",
+  "device": "0",
+  "use_cuda": true,
+  "workers": 4,
+  "runtime_flags": {
+    "amp": true,
+    "tf32_matmul": true,
+    "tf32_cudnn": true,
+    "cudnn_benchmark": true
+  }
+}

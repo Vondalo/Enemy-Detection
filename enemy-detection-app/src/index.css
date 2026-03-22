@@ -25,3 +25,10 @@ html, body, #root {
 .no-drag {
     -webkit-app-region: no-drag;
 }
+
+button,
+input,
+textarea,
+select {
+    -webkit-app-region: no-drag;
+}

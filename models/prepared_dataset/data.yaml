@@ -1,0 +1,5 @@
+path: C:\Users\Eray\Documents\GitHub\Enemy-Detection\models\prepared_dataset
+train: train/images
+val: val/images
+nc: 2
+names: ['enemy', 'player']

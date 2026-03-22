@@ -12,11 +12,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // New Dataset Management APIs
   listDatasets: () => ipcRenderer.invoke('list-datasets'),
+  listDatasetImages: (datasetPath, csvName) => ipcRenderer.invoke('list-dataset-images', datasetPath, csvName),
+  saveDatasetImageAnnotations: (payload) => ipcRenderer.invoke('save-dataset-image-annotations', payload),
+  deleteDatasetImage: (datasetPath, csvName, filename) => ipcRenderer.invoke('delete-dataset-image', datasetPath, csvName, filename),
   analyzeDatasetBias: (datasetPath, csvName) => ipcRenderer.invoke('analyze-dataset-bias', datasetPath, csvName),
   runBiasFix: (datasetPath, csvName) => ipcRenderer.invoke('run-bias-fix', datasetPath, csvName),
-  runTraining: (datasetPath, csvName, epochs) => ipcRenderer.invoke('run-training', datasetPath, csvName, epochs),
+  runTraining: (payload) => ipcRenderer.invoke('run-training', payload),
   listVideos: () => ipcRenderer.invoke('list-videos'),
   runDataCollection: (videoName, datasetName) => ipcRenderer.invoke('run-data-collection', videoName, datasetName),
+  startManualCollection: (videoName, datasetName) => ipcRenderer.invoke('start-manual-collection', videoName, datasetName),
+  saveManualAnnotation: (payload) => ipcRenderer.invoke('save-manual-annotation', payload),
+  finishManualCollection: (datasetPath) => ipcRenderer.invoke('finish-manual-collection', datasetPath),
   runAugmentation: (datasetPath, csvName, outputDatasetName) => ipcRenderer.invoke('run-augmentation', datasetPath, csvName, outputDatasetName),
   
   // Window Controls

@@ -2,6 +2,23 @@
 
 This project now trains an **object detector** instead of regressing a single `(x, y)` point. The data pipeline exports **bounding boxes** in YOLO format, the trainer fine-tunes a detector backbone with `ultralytics`, and inference returns full detections instead of a red-dot coordinate guess.
 
+## Environment Setup
+
+To set up the Python environment required for this project, run the following command in PowerShell:
+
+```powershell
+.\setup_venv.ps1
+```
+
+This script will:
+1. Create a virtual environment in the `.venv` directory.
+2. Install all necessary dependencies from `requirements.txt`.
+3. Detect an NVIDIA GPU and replace the default CPU-only PyTorch build with the official CUDA-enabled wheel.
+4. Print the final `torch` / CUDA runtime so you can confirm whether training will use the GPU.
+
+If you have an NVIDIA GPU, the trainer should report a CUDA-enabled runtime such as `torch=2.9.1+cu128`, `cuda_available=True`, and your GPU name.
+If it still shows a CPU-only build, training will fall back to CPU unless you reinstall the CUDA wheel.
+
 ## What Changed
 
 - The old ResNet18 coordinate regressor was replaced with a YOLO-style detector workflow.

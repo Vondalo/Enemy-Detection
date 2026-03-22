@@ -11,6 +11,7 @@ from src.dataset import (
     center_ratio,
     export_split_dataset,
     group_annotations_by_video,
+    infer_class_names,
     load_annotations,
     split_annotations_by_video,
     write_data_yaml,
@@ -63,7 +64,8 @@ def main():
     print("Copying validation split...")
     val_stats = export_split_dataset(val_annotations, args.img_dir, output_dir / "val")
 
-    data_yaml = write_data_yaml(output_dir)
+    class_names = infer_class_names(annotations)
+    data_yaml = write_data_yaml(output_dir, class_names=class_names)
     video_groups = group_annotations_by_video(annotations)
     manifest = {
         "source_csv": args.csv,
@@ -77,6 +79,7 @@ def main():
         "val_annotations": len(val_annotations),
         "train_images": train_stats["images"],
         "val_images": val_stats["images"],
+        "class_names": class_names,
         "data_yaml": str(data_yaml),
     }
 

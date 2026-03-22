@@ -79,6 +79,7 @@ MAX_TRACK_JUMP_PX = 50      # Maximum allowed position jump between frames
 # Frame sampling
 ENGAGEMENT_WINDOW = [-30, -20, -10, 0, 10, 20]  # Frame offsets around engagements
 RANDOM_SAMPLE_RATE = 0.02   # 2% random exploration frames (reduced for speed)
+MIN_EXPLORATION_SAMPLES = 12  # Always inspect at least a handful of frames
 
 # Quality control
 BLUR_THRESHOLD = 100        # Laplacian variance threshold
@@ -93,6 +94,7 @@ CENTER_CELL_PENALTY = 0.3   # Reduce center cell quota by 70%
 
 # Detection filtering
 MAX_DETECTIONS_PER_FRAME = 5
+DETECTION_CONF_THRESHOLD = 0.15
 MIN_ENEMY_AREA_PX = 100
 MAX_ENEMY_AREA_RATIO = 0.25
 MAX_BOTTOM_Y_RATIO = 0.7  # Don't accept detections below 70% of screen height
@@ -680,12 +682,148 @@ class ReviewInterface:
         self.screen_w = screen_w
         self.screen_h = screen_h
         self.click_point = None
+        self.drag_start = None
+        self.drag_current = None
+        self.drawn_box = None
+        self.current_zoom = 1.0
         cv2.namedWindow("Review", cv2.WINDOW_NORMAL)
         cv2.setMouseCallback("Review", self._mouse_callback)
+
+    def reset_interaction(self):
+        self.click_point = None
+        self.drag_start = None
+        self.drag_current = None
+        self.drawn_box = None
+
+    def _to_original_coords(self, x: int, y: int) -> Tuple[int, int]:
+        zoom = self.current_zoom if self.current_zoom > 0 else 1.0
+        return int(x / zoom), int(y / zoom)
         
     def _mouse_callback(self, event, x, y, flags, param):
+        ox, oy = self._to_original_coords(x, y)
         if event == cv2.EVENT_LBUTTONDOWN:
-            self.click_point = (x, y)
+            self.drag_start = (ox, oy)
+            self.drag_current = (ox, oy)
+        elif event == cv2.EVENT_MOUSEMOVE and self.drag_start is not None:
+            self.drag_current = (ox, oy)
+        elif event == cv2.EVENT_LBUTTONUP and self.drag_start is not None:
+            x1 = min(self.drag_start[0], ox)
+            y1 = min(self.drag_start[1], oy)
+            x2 = max(self.drag_start[0], ox)
+            y2 = max(self.drag_start[1], oy)
+            if abs(x2 - x1) < 8 or abs(y2 - y1) < 8:
+                self.click_point = (ox, oy)
+                self.drawn_box = None
+            else:
+                self.drawn_box = (x1, y1, x2, y2)
+                self.click_point = None
+            self.drag_start = None
+            self.drag_current = None
+        elif event == cv2.EVENT_RBUTTONDOWN:
+            self.reset_interaction()
+
+    @staticmethod
+    def _draw_manual_overlay(display: np.ndarray, click_point, drawn_box,
+                             drag_start=None, drag_current=None):
+        overlay_color = (255, 0, 255)
+        if drawn_box is not None:
+            x1, y1, x2, y2 = drawn_box
+            cv2.rectangle(display, (int(x1), int(y1)), (int(x2), int(y2)), overlay_color, 2)
+            cv2.putText(display, "MANUAL BOX", (int(x1), max(20, int(y1) - 6)),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, overlay_color, 2)
+        elif click_point is not None:
+            cx, cy = click_point
+            cv2.circle(display, (int(cx), int(cy)), 6, overlay_color, -1)
+            cv2.putText(display, "MANUAL POINT", (int(cx) + 8, max(20, int(cy) - 8)),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, overlay_color, 2)
+        elif drag_start is not None and drag_current is not None:
+            x1 = min(drag_start[0], drag_current[0])
+            y1 = min(drag_start[1], drag_current[1])
+            x2 = max(drag_start[0], drag_current[0])
+            y2 = max(drag_start[1], drag_current[1])
+            cv2.rectangle(display, (int(x1), int(y1)), (int(x2), int(y2)), overlay_color, 2)
+
+    def label_frame(self, frame: np.ndarray, detections: List[Dict]) -> Dict:
+        """
+        Manual labeling loop.
+
+        Controls:
+        - Drag left mouse: draw bbox
+        - Single left click: place point, press A to accept a default box around it
+        - 1-9: select suggested detector bbox
+        - A / Enter: accept current manual box/point or selected suggestion
+        - N: mark no enemy and skip the frame
+        - S: skip frame
+        - R or right click: clear manual annotation
+        - P: skip remaining frames in current video
+        - ESC: quit collection
+        """
+        self.reset_interaction()
+
+        h, w = frame.shape[:2]
+        zoom_w = self.screen_w / w
+        zoom_h = self.screen_h / h
+        self.current_zoom = min(zoom_w, zoom_h, 1.0)
+
+        selected_idx = 0 if detections else None
+
+        while True:
+            display = frame.copy()
+
+            for i, det in enumerate(detections):
+                x1, y1, x2, y2 = det['bbox']
+                conf = det['confidence']
+                color = (0, 255, 255) if i == selected_idx else (0, 255, 0)
+                cv2.rectangle(display, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+                label = f"{i+1}: {conf:.2f}"
+                cv2.putText(display, label, (int(x1), max(20, int(y1) - 6)),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+            self._draw_manual_overlay(
+                display,
+                self.click_point,
+                self.drawn_box,
+                self.drag_start,
+                self.drag_current,
+            )
+
+            instructions = "Draw box or click enemy. A=save 1-9=suggested N=no-enemy S=skip R=clear ESC=quit"
+            cv2.putText(display, instructions, (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+            if self.current_zoom < 1.0:
+                display = cv2.resize(display, (int(w * self.current_zoom), int(h * self.current_zoom)))
+
+            cv2.imshow("Review", display)
+            key = cv2.waitKey(20) & 0xFF
+
+            if key == 255:
+                continue
+            if key in (ord('r'), ord('R')):
+                self.reset_interaction()
+                continue
+            if key in (ord('a'), ord('A'), 13):
+                if self.drawn_box is not None:
+                    return {'action': 'save_manual_box', 'bbox': self.drawn_box}
+                if self.click_point is not None:
+                    return {'action': 'save_manual_point', 'point': self.click_point}
+                if selected_idx is not None:
+                    return {'action': 'accept_detection', 'detection_idx': selected_idx}
+                continue
+            if key == ord('n') or key == ord('N'):
+                return {'action': 'no_enemy'}
+            if key == ord('s') or key == ord('S'):
+                return {'action': 'skip'}
+            if key == ord('p') or key == ord('P'):
+                return {'action': 'next_video'}
+            if key == 27:
+                return {'action': 'quit'}
+            if ord('1') <= key <= ord('9'):
+                idx = key - ord('1')
+                if idx < len(detections):
+                    selected_idx = idx
+
+        return {'action': 'skip'}
     
     def display(self, frame: np.ndarray, detections: List[Dict], 
                 mode: str = "confirm", show_self_player_zone: bool = False) -> str:
@@ -843,6 +981,8 @@ class ImprovedDataPipeline:
         self.uncertain_frames = []  # Store frames that were auto-skipped
         self.high_confidence_labels = []  # Auto-accepted frames
         self.confirmed_frames = []  # User-confirmed uncertain frames
+        self.stop_requested = False
+        self.skip_current_video = False
         
         # Initialize components
         logger.info(f"Loading YOLO model from {yolo_model_path}...")
@@ -873,6 +1013,7 @@ class ImprovedDataPipeline:
         self.stats = {
             'processed': 0,
             'auto_labeled': 0,
+            'weak_auto_saved': 0,
             'confirmed': 0,
             'manual': 0,
             'tracked': 0,
@@ -923,7 +1064,7 @@ class ImprovedDataPipeline:
 
     def _build_label_row(self, image_name: str, detection: Dict, frame_shape: tuple,
                          video_id: str, frame_idx: int, timestamp: float,
-                         auto_labeled: bool) -> Dict:
+                         auto_labeled: bool, bbox_source: str = 'measured') -> Dict:
         normalized = self._normalize_detection(detection, frame_shape)
         return {
             'filename': image_name,
@@ -939,7 +1080,7 @@ class ImprovedDataPipeline:
             'timestamp': timestamp,
             'confidence': detection['confidence'],
             'auto_labeled': auto_labeled,
-            'bbox_source': 'measured',
+            'bbox_source': bbox_source,
             'aug_type': '',
         }
 
@@ -953,7 +1094,33 @@ class ImprovedDataPipeline:
             f"{normalized['width']:.6f} {normalized['height']:.6f}\n",
             encoding='utf-8'
         )
-    
+
+    @staticmethod
+    def _bbox_to_detection(bbox: Tuple[int, int, int, int], confidence: float = 1.0) -> Dict:
+        x1, y1, x2, y2 = bbox
+        width = max(1.0, float(x2 - x1))
+        height = max(1.0, float(y2 - y1))
+        return {
+            'bbox': (float(x1), float(y1), float(x2), float(y2)),
+            'center': (float(x1) + width / 2, float(y1) + height / 2),
+            'width': width,
+            'height': height,
+            'confidence': float(confidence),
+            'class': 0,
+        }
+
+    @staticmethod
+    def _point_to_bbox(point: Tuple[int, int], frame_shape: tuple) -> Tuple[int, int, int, int]:
+        h, w = frame_shape[:2]
+        default_w = max(24, int(w * 0.08))
+        default_h = max(36, int(h * 0.18))
+        cx, cy = point
+        x1 = max(0, int(cx - default_w / 2))
+        y1 = max(0, int(cy - default_h / 2))
+        x2 = min(w - 1, int(cx + default_w / 2))
+        y2 = min(h - 1, int(cy + default_h / 2))
+        return x1, y1, x2, y2
+
     def _run_detection(self, frame: np.ndarray, frame_idx: int = 0) -> List[Dict]:
         """Run YOLO detection and return filtered results (excluding self-player)."""
         h, w = frame.shape[:2]
@@ -965,7 +1132,7 @@ class ImprovedDataPipeline:
             x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
             
             # Filter by confidence
-            if conf < 0.2:
+            if conf < DETECTION_CONF_THRESHOLD:
                 continue
             
             # Filter by size
@@ -1150,7 +1317,8 @@ class ImprovedDataPipeline:
     
     def _save_high_confidence(self, frame: np.ndarray, confidence_data: Dict,
                              video_id: str, frame_idx: int, timestamp: float,
-                             auto_labeled: bool = True):
+                             auto_labeled: bool = True, bbox_source: str = 'measured',
+                             stats_key: Optional[str] = None):
         """Save high-confidence frame immediately."""
         detection = confidence_data['detection']
         cx, cy = detection['center']
@@ -1171,10 +1339,15 @@ class ImprovedDataPipeline:
             frame_idx=frame_idx,
             timestamp=timestamp,
             auto_labeled=auto_labeled,
+            bbox_source=bbox_source,
         )
         
         self.high_confidence_labels.append(label)
-        self.stats['auto_labeled'] += 1
+        resolved_stats_key = stats_key
+        if resolved_stats_key is None:
+            resolved_stats_key = 'auto_labeled' if auto_labeled else 'weak_auto_saved'
+        if resolved_stats_key:
+            self.stats[resolved_stats_key] = self.stats.get(resolved_stats_key, 0) + 1
         
         # Append to CSV dynamically
         with open(self.csv_path, 'a', newline='') as f:
@@ -1261,6 +1434,8 @@ class ImprovedDataPipeline:
                     frame_data['frame_idx'],
                     frame_data['timestamp'],
                     auto_labeled=False,
+                    bbox_source='manual_review',
+                    stats_key='confirmed',
                 )
     
     def _process_high_confidence_batch(self):
@@ -1315,6 +1490,75 @@ class ImprovedDataPipeline:
             import shutil
             shutil.rmtree(preview_dir)
             logger.debug("Cleaned up preview directory")
+
+    def _process_frame(self, frame: np.ndarray, video_id: str, frame_idx: int, timestamp: float) -> str:
+        """Manual-first frame review for bbox collection."""
+        detections = self._run_detection(frame, frame_idx)
+        action = self.ui.label_frame(frame, detections)
+
+        if action['action'] == 'accept_detection':
+            det_idx = action['detection_idx']
+            detection = detections[det_idx]
+            self._save_high_confidence(
+                frame,
+                {'detection': detection, 'score': detection['confidence']},
+                video_id,
+                frame_idx,
+                timestamp,
+                auto_labeled=False,
+                bbox_source='manual_pick',
+                stats_key='manual',
+            )
+            return 'saved'
+
+        if action['action'] == 'save_manual_box':
+            detection = self._bbox_to_detection(action['bbox'])
+            self._save_high_confidence(
+                frame,
+                {'detection': detection, 'score': 1.0},
+                video_id,
+                frame_idx,
+                timestamp,
+                auto_labeled=False,
+                bbox_source='manual_box',
+                stats_key='manual',
+            )
+            return 'saved'
+
+        if action['action'] == 'save_manual_point':
+            bbox = self._point_to_bbox(action['point'], frame.shape)
+            detection = self._bbox_to_detection(bbox)
+            self._save_high_confidence(
+                frame,
+                {'detection': detection, 'score': 1.0},
+                video_id,
+                frame_idx,
+                timestamp,
+                auto_labeled=False,
+                bbox_source='manual_point',
+                stats_key='manual',
+            )
+            return 'saved'
+
+        if action['action'] == 'no_enemy':
+            self.stats['skipped'] += 1
+            logger.info(f"  [Manual] Marked no enemy for frame {video_id}_{frame_idx:06d}")
+            return 'skip'
+
+        if action['action'] == 'skip':
+            self.stats['skipped'] += 1
+            return 'skip'
+
+        if action['action'] == 'next_video':
+            self.skip_current_video = True
+            return 'next_video'
+
+        if action['action'] == 'quit':
+            self.stop_requested = True
+            return 'quit'
+
+        self.stats['skipped'] += 1
+        return 'skip'
     
     def _process_frame_automated(self, frame: np.ndarray, video_id: str, frame_idx: int,
                                 timestamp: float) -> bool:
@@ -1330,7 +1574,23 @@ class ImprovedDataPipeline:
             self._save_high_confidence(frame, confidence_data, video_id, frame_idx, timestamp)
             return True
         elif confidence_data['tier'] == 'UNCERTAIN':
-            # Queue for later review
+            detection = confidence_data.get('detection')
+            if detection:
+                # In unattended mode, keep medium-confidence proposals instead of
+                # ending with an empty dataset. They stay marked as weak auto labels.
+                self._save_high_confidence(
+                    frame,
+                    confidence_data,
+                    video_id,
+                    frame_idx,
+                    timestamp,
+                    auto_labeled=False,
+                    bbox_source='weak_auto',
+                    stats_key='weak_auto_saved',
+                )
+                self.stats['uncertain'] += 1
+                return True
+            # Queue only if something upstream classified it as uncertain without a box.
             self._queue_uncertain_frame(frame, confidence_data, video_id, frame_idx, timestamp)
             self.stats['uncertain'] += 1
             return False
@@ -1357,9 +1617,15 @@ class ImprovedDataPipeline:
                 data = json.load(f)
                 engagement_frames = data.get(video_id, [])
                 
-        sampler = FrameSampler(total_frames, engagement_frames)
-        n_exploration = int(total_frames * RANDOM_SAMPLE_RATE)
-        sample_frames = sampler.get_all_samples(n_exploration=n_exploration)
+        if self.auto_skip:
+            sampler = FrameSampler(total_frames, engagement_frames)
+            n_exploration = min(
+                total_frames,
+                max(MIN_EXPLORATION_SAMPLES, int(total_frames * RANDOM_SAMPLE_RATE))
+            ) if total_frames > 0 else 0
+            sample_frames = sampler.get_all_samples(n_exploration=n_exploration)
+        else:
+            sample_frames = list(range(total_frames))
         
         logger.info(f"Total frames to process: {len(sample_frames)}")
         
@@ -1371,6 +1637,7 @@ class ImprovedDataPipeline:
         saved_count = 0
         sample_set = set(sample_frames)
         max_frame = max(sample_set) if sample_set else 0
+        self.skip_current_video = False
         
         frame_idx = 0
         pbar = tqdm(total=len(sample_set), desc=f"{video_id}")
@@ -1388,13 +1655,20 @@ class ImprovedDataPipeline:
                     if self._process_frame_automated(frame, video_id, frame_idx, timestamp):
                         saved_count += 1
                 else:
-                    # Original interactive mode
-                    if self._process_frame(frame, video_id, frame_idx, sampler):
+                    outcome = self._process_frame(frame, video_id, frame_idx, timestamp)
+                    if outcome == 'saved':
                         saved_count += 1
+                    elif outcome == 'next_video':
+                        break
+                    elif outcome == 'quit':
+                        break
                         
                 pbar.update(1)
                 
             frame_idx += 1
+
+            if self.stop_requested or self.skip_current_video:
+                break
             
         pbar.close()
         
@@ -1435,6 +1709,8 @@ class ImprovedDataPipeline:
             logger.info(f"\n[Video {i}/{len(video_files)}] Starting {video_path.name}")
             stats = self.process_video(video_path)
             all_stats.append(stats)
+            if self.stop_requested:
+                break
         
         # Final processing
         if self.auto_skip:

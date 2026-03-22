@@ -1,0 +1,22 @@
+{
+  "total_input": 32,
+  "total_input_annotations": 56,
+  "total_output": 112,
+  "total_output_annotations": 194,
+  "by_region": {
+    "center": 12,
+    "edge": 20,
+    "corner": 0,
+    "negative": 0
+  },
+  "by_type": {
+    "original": 32,
+    "brightness_0.7": 15,
+    "brightness_1.3": 15,
+    "noise": 18,
+    "flip": 18,
+    "shift": 10,
+    "zoom": 4
+  },
+  "skipped": 0
+}

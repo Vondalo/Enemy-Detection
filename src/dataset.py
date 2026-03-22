@@ -8,6 +8,12 @@ from typing import Dict, Iterable, List, Tuple
 
 DEFAULT_CLASS_ID = 0
 DEFAULT_CLASS_NAME = "enemy"
+PLAYER_CLASS_ID = 1
+PLAYER_CLASS_NAME = "player"
+KNOWN_CLASS_NAMES = {
+    DEFAULT_CLASS_ID: DEFAULT_CLASS_NAME,
+    PLAYER_CLASS_ID: PLAYER_CLASS_NAME,
+}
 DEFAULT_BOX_WIDTH = 0.08
 DEFAULT_BOX_HEIGHT = 0.18
 
@@ -203,9 +209,22 @@ def annotation_fieldnames() -> List[str]:
     return list(ANNOTATION_FIELDNAMES)
 
 
+def infer_class_names(annotations: Iterable[DetectionAnnotation]) -> List[str]:
+    class_names: Dict[int, str] = dict(KNOWN_CLASS_NAMES)
+    max_class_id = DEFAULT_CLASS_ID
+
+    for annotation in annotations:
+        class_id = int(annotation.class_id)
+        class_name = (annotation.class_name or KNOWN_CLASS_NAMES.get(class_id, f"class_{class_id}")).strip()
+        class_names[class_id] = class_name
+        max_class_id = max(max_class_id, class_id)
+
+    return [class_names.get(class_id, f"class_{class_id}") for class_id in range(max_class_id + 1)]
+
+
 def load_annotations(csv_path: str | Path) -> List[DetectionAnnotation]:
     annotations: List[DetectionAnnotation] = []
-    with open(csv_path, "r", encoding="utf-8") as handle:
+    with open(csv_path, "r", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
             if not row.get("filename"):
