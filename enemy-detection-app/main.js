@@ -280,20 +280,45 @@ ipcMain.handle('run-training', async (event, datasetPath, csvName, epochs = 10) 
         
         const csvPath = path.join(datasetPath, csvName);
         const imgDir = path.join(datasetPath, 'images');
-
-        // Note: train.py might need adjustment to take absolute paths for images/csv
-        const trainProcess = spawn(pythonExe, [
+        
+        // Check for validation data in cleaned_balanced subfolder
+        const cleanedDir = path.join(datasetPath, 'cleaned_balanced');
+        let valCsv = null;
+        let valDir = null;
+        
+        if (fs.existsSync(cleanedDir)) {
+            const cleanedFiles = fs.readdirSync(cleanedDir);
+            const valCsvFile = cleanedFiles.find(f => f.includes('labels') && f.endsWith('.csv'));
+            if (valCsvFile) {
+                valCsv = path.join(cleanedDir, valCsvFile);
+                valDir = path.join(cleanedDir, 'images');
+            }
+        }
+        
+        // If no validation data found, let training script handle auto-split
+        const trainArgs = [
             trainScript, 
             '--train_dir', imgDir, 
             '--train_csv', csvPath,
             '--epochs', epochs.toString()
-        ], {
+        ];
+        
+        if (valCsv && valDir) {
+            trainArgs.push('--val_csv', valCsv);
+            trainArgs.push('--val_dir', valDir);
+        }
+
+        const trainProcess = spawn(pythonExe, trainArgs, {
             cwd: projectRoot,
             env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
         });
 
         trainProcess.stdout.on('data', (data) => {
             mainWindow.webContents.send('pipeline-output', { type: 'stdout', msg: data.toString() });
+        });
+
+        trainProcess.stderr.on('data', (data) => {
+            mainWindow.webContents.send('pipeline-output', { type: 'stderr', msg: data.toString() });
         });
 
         trainProcess.on('close', (code) => {
