@@ -11,13 +11,35 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow;
 let currentProcess = null;
+let videoPredictionProcess = null;
+let videoPredictionSessionId = null;
+let videoPredictionStopRequested = false;
 const collectionSessions = new Map();
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.bmp', '.webp']);
+const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'webm', 'mkv'];
 const ANNOTATION_HEADERS = [
   'filename', 'class_id', 'class_name', 'has_enemy', 'x_center',
   'y_center', 'width', 'height', 'video_id', 'frame_idx',
   'timestamp', 'confidence', 'auto_labeled', 'bbox_source', 'aug_type'
 ];
+
+function sendPipelineOutput(type, msg) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('pipeline-output', { type, msg });
+  }
+}
+
+function sendVideoPredictionEvent(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('video-prediction-event', payload);
+  }
+}
+
+function cleanupVideoPredictionState() {
+  videoPredictionProcess = null;
+  videoPredictionSessionId = null;
+  videoPredictionStopRequested = false;
+}
 
 function parseCsvLine(line) {
   const values = [];
@@ -380,6 +402,17 @@ ipcMain.handle('select-image', async () => {
   }
 });
 
+ipcMain.handle('select-video', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: 'Videos', extensions: VIDEO_EXTENSIONS }]
+  });
+  if (canceled) {
+    return null;
+  }
+  return filePaths[0];
+});
+
 ipcMain.handle('run-prediction', async (event, imagePath) => {
   return new Promise((resolve, reject) => {
     const projectRoot = path.join(__dirname, '..');
@@ -418,6 +451,149 @@ ipcMain.handle('run-prediction', async (event, imagePath) => {
       }
     });
   });
+});
+
+ipcMain.handle('start-video-prediction', async (event, payload = {}) => {
+  return new Promise((resolve) => {
+    if (videoPredictionProcess) {
+      resolve({ error: 'A video prediction session is already running. Stop it before starting another.' });
+      return;
+    }
+
+    const projectRoot = path.join(__dirname, '..');
+    const pythonExe = path.join(projectRoot, '.venv', 'Scripts', 'python.exe');
+    const scriptPath = path.join(projectRoot, 'src', 'predict_video_cli.py');
+    const videoPath = String(payload.videoPath || '').trim();
+    const mode = String(payload.mode || 'precompute').trim().toLowerCase();
+
+    if (!videoPath) {
+      resolve({ error: 'No video path was provided.' });
+      return;
+    }
+    if (!['precompute', 'stream'].includes(mode)) {
+      resolve({ error: `Unsupported video inference mode '${mode}'.` });
+      return;
+    }
+    if (!fs.existsSync(videoPath)) {
+      resolve({ error: `Video file not found: ${videoPath}` });
+      return;
+    }
+    if (!fs.existsSync(pythonExe)) {
+      resolve({ error: `Python environment not found at ${pythonExe}. Run setup_venv.ps1 first.` });
+      return;
+    }
+    if (!fs.existsSync(scriptPath)) {
+      resolve({ error: `Video prediction script not found at ${scriptPath}.` });
+      return;
+    }
+
+    const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const child = spawn(pythonExe, [scriptPath, videoPath, '--mode', mode], {
+      cwd: projectRoot,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
+    });
+
+    videoPredictionProcess = child;
+    videoPredictionSessionId = sessionId;
+    videoPredictionStopRequested = false;
+
+    let resolved = false;
+    let stdoutBuffer = '';
+    let lastLoggedProcessed = 0;
+
+    const resolveOnce = (value) => {
+      if (!resolved) {
+        resolved = true;
+        resolve(value);
+      }
+    };
+
+    const handleVideoEvent = (eventPayload) => {
+      const forwarded = { ...eventPayload, session_id: sessionId };
+      sendVideoPredictionEvent(forwarded);
+
+      if (eventPayload.type === 'started') {
+        sendPipelineOutput(
+          'stdout',
+          `[Video] Started ${path.basename(String(eventPayload.video_path || videoPath))} | ${Number(eventPayload.frame_count || 0)} frame(s) @ ${Number(eventPayload.fps || 0).toFixed(2)} FPS on ${eventPayload.device_name || eventPayload.device || 'unknown'}\n`,
+        );
+      } else if (eventPayload.type === 'progress') {
+        const processed = Number(eventPayload.processed_frames || 0);
+        const total = Number(eventPayload.total_frames || 0);
+        if (processed === 1 || total === processed || processed - lastLoggedProcessed >= 30) {
+          lastLoggedProcessed = processed;
+          sendPipelineOutput('stdout', `[Video] Processed ${processed}/${total || '?'} frames.\n`);
+        }
+      } else if (eventPayload.type === 'complete') {
+        sendPipelineOutput('stdout', `[Video] Prediction complete. Processed ${Number(eventPayload.processed_frames || 0)} frame(s).\n`);
+      } else if (eventPayload.type === 'error') {
+        sendPipelineOutput('stderr', `[Video][Error] ${eventPayload.message || 'Unknown video prediction error.'}\n`);
+      }
+    };
+
+    const flushStdoutBuffer = (includeTrailing = false) => {
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = includeTrailing ? '' : (lines.pop() || '');
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        try {
+          handleVideoEvent(JSON.parse(line));
+        } catch {
+          sendPipelineOutput('stdout', `${line}\n`);
+        }
+      }
+    };
+
+    child.on('spawn', () => {
+      resolveOnce({ success: true, session_id: sessionId });
+    });
+
+    child.stdout.on('data', (data) => {
+      stdoutBuffer += data.toString();
+      flushStdoutBuffer();
+    });
+
+    child.stderr.on('data', (data) => {
+      sendPipelineOutput('stderr', data.toString());
+    });
+
+    child.on('error', (error) => {
+      sendVideoPredictionEvent({ type: 'error', session_id: sessionId, message: error.message });
+      sendPipelineOutput('stderr', `[Video][Error] ${error.message}\n`);
+      cleanupVideoPredictionState();
+      resolveOnce({ error: error.message });
+    });
+
+    child.on('close', (code) => {
+      flushStdoutBuffer(true);
+      const closingSessionId = videoPredictionSessionId || sessionId;
+      const stoppedByUser = videoPredictionStopRequested;
+
+      if (stoppedByUser) {
+        sendVideoPredictionEvent({ type: 'stopped', session_id: closingSessionId });
+        sendPipelineOutput('stdout', '[Video] Prediction session stopped.\n');
+      } else if (code !== 0) {
+        const message = `Video prediction failed with code ${code}`;
+        sendVideoPredictionEvent({ type: 'error', session_id: closingSessionId, message });
+        sendPipelineOutput('stderr', `[Video][Error] ${message}\n`);
+        resolveOnce({ error: message });
+      }
+
+      cleanupVideoPredictionState();
+      resolveOnce({ success: true, session_id: sessionId });
+    });
+  });
+});
+
+ipcMain.handle('stop-video-prediction', async () => {
+  if (!videoPredictionProcess) {
+    return { success: true };
+  }
+
+  videoPredictionStopRequested = true;
+  spawn('taskkill', ['/pid', String(videoPredictionProcess.pid), '/f', '/t']);
+  return { success: true };
 });
 
 ipcMain.handle('clear-videos', async (event) => {

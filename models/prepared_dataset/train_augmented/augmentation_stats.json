@@ -1,0 +1,38 @@
+{
+  "profile": "accurate",
+  "seed": 42,
+  "total_input_images": 117,
+  "total_input_annotations": 415,
+  "total_output_images": 578,
+  "total_output_annotations": 2076,
+  "input_primary_regions": {
+    "center": 36,
+    "edge": 75,
+    "corner": 6,
+    "negative": 0
+  },
+  "output_primary_regions": {
+    "center": 146,
+    "edge": 373,
+    "corner": 59,
+    "negative": 0
+  },
+  "by_recipe": {
+    "original": 117,
+    "photo_exposure": 117,
+    "photo_gameplay": 117,
+    "affine_mild": 114,
+    "retarget_edge": 75,
+    "retarget_corner": 32,
+    "photo_blur_noise": 6
+  },
+  "drop_reasons": {
+    "retarget_corner:target_not_reached": 43,
+    "affine_mild:primary_box_lost": 3
+  },
+  "successful_targets": {
+    "edge": 75,
+    "corner": 32
+  },
+  "skipped_images": 0
+}

@@ -1,4 +1,8 @@
-# Setup script for Python Virtual Environment
+param(
+    [string]$PythonExe
+)
+
+$ErrorActionPreference = "Stop"
 
 Write-Host "--- Enemy Detection: Python Environment Setup ---" -ForegroundColor Cyan
 
@@ -7,58 +11,224 @@ $pytorchTorchVersion = "2.9.1"
 $pytorchTorchvisionVersion = "0.24.1"
 $pytorchTorchaudioVersion = "2.9.1"
 
-# 1. Check for Python
-$pythonExists = Get-Command python -ErrorAction SilentlyContinue
-if (-not $pythonExists) {
-    Write-Host "Error: Python is not installed or not in your PATH." -ForegroundColor Red
-    Write-Host "Please install Python from https://www.python.org/ (ensure 'Add to PATH' is checked)."
-    exit 1
+function Invoke-NativeCommand {
+    param(
+        [string]$Executable,
+        [string[]]$Arguments,
+        [string]$FailureMessage
+    )
+
+    & $Executable @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw $FailureMessage
+    }
 }
 
-$pythonVersion = python --version
-Write-Host "Found Python: $pythonVersion" -ForegroundColor Green
+function Test-PythonExecutable {
+    param(
+        [string]$Executable
+    )
 
-# 2. Create Virtual Environment
+    if ([string]::IsNullOrWhiteSpace($Executable)) {
+        return $false
+    }
+
+    try {
+        & $Executable -c "import sys; print(sys.executable)" *> $null
+        return $LASTEXITCODE -eq 0
+    } catch {
+        return $false
+    }
+}
+
+function Get-CommandPath {
+    param(
+        [string]$CommandName
+    )
+
+    try {
+        $command = Get-Command $CommandName -ErrorAction Stop
+        if ($command.Source) {
+            return $command.Source
+        }
+        if ($command.Path) {
+            return $command.Path
+        }
+    } catch {
+    }
+
+    return $null
+}
+
+function Get-PythonFromPyLauncher {
+    $pyLauncher = Get-CommandPath "py"
+    if (-not $pyLauncher) {
+        return $null
+    }
+
+    try {
+        $resolved = (& $pyLauncher -3 -c "import sys; print(sys.executable)" 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -eq 0 -and $resolved) {
+            $candidate = $resolved.ToString().Trim()
+            if (Test-PythonExecutable $candidate) {
+                return $candidate
+            }
+        }
+    } catch {
+    }
+
+    return $null
+}
+
+function Get-CommonPythonCandidates {
+    $patterns = @()
+
+    if ($env:LocalAppData) {
+        $patterns += (Join-Path $env:LocalAppData "Programs\Python\Python*\python.exe")
+    }
+    if ($env:ProgramFiles) {
+        $patterns += (Join-Path $env:ProgramFiles "Python*\python.exe")
+        $patterns += (Join-Path $env:ProgramFiles "Python\Python*\python.exe")
+    }
+    if (${env:ProgramFiles(x86)}) {
+        $patterns += (Join-Path ${env:ProgramFiles(x86)} "Python*\python.exe")
+        $patterns += (Join-Path ${env:ProgramFiles(x86)} "Python\Python*\python.exe")
+    }
+
+    $results = @()
+    foreach ($pattern in $patterns) {
+        try {
+            $results += Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue |
+                Select-Object -ExpandProperty FullName
+        } catch {
+        }
+    }
+
+    return $results | Where-Object { $_ } | Sort-Object -Descending -Unique
+}
+
+function Find-BasePython {
+    param(
+        [string]$PreferredPython
+    )
+
+    $candidates = New-Object System.Collections.Generic.List[string]
+
+    if ($PreferredPython) {
+        $candidates.Add($PreferredPython)
+    }
+
+    $pythonCommand = Get-CommandPath "python"
+    if ($pythonCommand) {
+        $candidates.Add($pythonCommand)
+    }
+
+    $pyResolved = Get-PythonFromPyLauncher
+    if ($pyResolved) {
+        $candidates.Add($pyResolved)
+    }
+
+    foreach ($candidate in Get-CommonPythonCandidates) {
+        $candidates.Add($candidate)
+    }
+
+    foreach ($candidate in ($candidates | Where-Object { $_ } | Select-Object -Unique)) {
+        if (Test-PythonExecutable $candidate) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
 $venvDir = ".venv"
-if (Test-Path $venvDir) {
-    Write-Host "Updating existing virtual environment in $venvDir..." -ForegroundColor Yellow
+$venvPython = Join-Path (Join-Path $venvDir "Scripts") "python.exe"
+$needsRebuild = $false
+
+if (Test-Path $venvPython) {
+    if (Test-PythonExecutable $venvPython) {
+        Write-Host "Using existing virtual environment in $venvDir..." -ForegroundColor Yellow
+    } else {
+        Write-Host "Existing virtual environment is broken. Recreating $venvDir..." -ForegroundColor Yellow
+        $needsRebuild = $true
+    }
+} elseif (Test-Path $venvDir) {
+    Write-Host "Existing virtual environment is incomplete. Recreating $venvDir..." -ForegroundColor Yellow
+    $needsRebuild = $true
 } else {
     Write-Host "Creating virtual environment in $venvDir..." -ForegroundColor Yellow
-    python -m venv $venvDir
+    $needsRebuild = $true
 }
 
-# 3. Path to python executable inside venv
-$venvPython = Join-Path (Join-Path $venvDir "Scripts") "python.exe"
+if ($needsRebuild) {
+    $basePython = Find-BasePython $PythonExe
+    if (-not $basePython) {
+        Write-Host "Error: Could not find a usable base Python interpreter." -ForegroundColor Red
+        Write-Host "Re-run this script with an explicit interpreter, for example:" -ForegroundColor Red
+        Write-Host ".\setup_venv.ps1 -PythonExe C:\Path\To\python.exe" -ForegroundColor Gray
+        exit 1
+    }
 
-# 4. Upgrade pip
+    Write-Host "Using base Python: $basePython" -ForegroundColor Green
+
+    if (Test-Path $venvDir) {
+        Remove-Item $venvDir -Recurse -Force
+    }
+
+    Invoke-NativeCommand -Executable $basePython `
+        -Arguments @("-m", "venv", $venvDir) `
+        -FailureMessage "Failed to create the virtual environment."
+
+    if (-not (Test-PythonExecutable $venvPython)) {
+        throw "Virtual environment creation succeeded, but '$venvPython' is not runnable."
+    }
+}
+
 Write-Host "Upgrading pip..." -ForegroundColor Green
-& $venvPython -m pip install --upgrade pip
+Invoke-NativeCommand -Executable $venvPython `
+    -Arguments @("-m", "pip", "install", "--upgrade", "pip") `
+    -FailureMessage "Failed to upgrade pip."
 
-# 5. Install requirements
 $requirementsFile = "requirements.txt"
 if (Test-Path $requirementsFile) {
     Write-Host "Installing dependencies from $requirementsFile..." -ForegroundColor Green
-    & $venvPython -m pip install -r $requirementsFile
+    Invoke-NativeCommand -Executable $venvPython `
+        -Arguments @("-m", "pip", "install", "-r", $requirementsFile) `
+        -FailureMessage "Failed to install project dependencies."
 } else {
     Write-Host "Warning: $requirementsFile not found. Skipping dependency installation." -ForegroundColor Yellow
 }
 
-# 6. Prefer CUDA-enabled PyTorch when an NVIDIA GPU is available
 $nvidiaSmi = Get-Command "nvidia-smi" -ErrorAction SilentlyContinue
 if ($nvidiaSmi) {
     Write-Host "NVIDIA GPU detected. Installing CUDA-enabled PyTorch ($pytorchCudaChannel)..." -ForegroundColor Green
-    & $venvPython -m pip install --upgrade --force-reinstall `
-        "torch==$pytorchTorchVersion" `
-        "torchvision==$pytorchTorchvisionVersion" `
-        "torchaudio==$pytorchTorchaudioVersion" `
-        --index-url "https://download.pytorch.org/whl/$pytorchCudaChannel"
+    Invoke-NativeCommand -Executable $venvPython `
+        -Arguments @(
+            "-m", "pip", "install", "--upgrade", "--force-reinstall",
+            "torch==$pytorchTorchVersion",
+            "torchvision==$pytorchTorchvisionVersion",
+            "torchaudio==$pytorchTorchaudioVersion",
+            "--index-url", "https://download.pytorch.org/whl/$pytorchCudaChannel"
+        ) `
+        -FailureMessage "Failed to install the CUDA-enabled PyTorch wheel."
 } else {
     Write-Host "No NVIDIA GPU detected. Keeping the default CPU PyTorch build from requirements.txt." -ForegroundColor Yellow
 }
 
-# 7. Show the final torch runtime so GPU/CPU state is obvious
+$torchCheck = @'
+import torch
+print('torch=' + str(torch.__version__))
+print('cuda_available=' + str(torch.cuda.is_available()))
+print('torch_cuda=' + str(torch.version.cuda))
+print('device_count=' + str(torch.cuda.device_count()))
+if torch.cuda.is_available() and torch.cuda.device_count():
+    print('device_name=' + str(torch.cuda.get_device_name(0)))
+'@
+
 Write-Host "Verifying final PyTorch runtime..." -ForegroundColor Green
-& $venvPython -c "import torch; print(f'torch={torch.__version__}'); print(f'cuda_available={torch.cuda.is_available()}'); print(f'torch_cuda={torch.version.cuda}'); print(f'device_count={torch.cuda.device_count()}')"
+Invoke-NativeCommand -Executable $venvPython `
+    -Arguments @("-c", $torchCheck) `
+    -FailureMessage "Failed to verify the final PyTorch runtime."
 
 Write-Host "`n--- Setup Complete! ---" -ForegroundColor Cyan
 Write-Host "The Electron app should now be able to run Python scripts."

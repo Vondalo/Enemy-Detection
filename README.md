@@ -10,11 +10,18 @@ To set up the Python environment required for this project, run the following co
 .\setup_venv.ps1
 ```
 
+If PowerShell cannot find a usable base Python on your machine, point the script at one explicitly:
+
+```powershell
+.\setup_venv.ps1 -PythonExe C:\Path\To\python.exe
+```
+
 This script will:
 1. Create a virtual environment in the `.venv` directory.
-2. Install all necessary dependencies from `requirements.txt`.
-3. Detect an NVIDIA GPU and replace the default CPU-only PyTorch build with the official CUDA-enabled wheel.
-4. Print the final `torch` / CUDA runtime so you can confirm whether training will use the GPU.
+2. Detect and rebuild a broken `.venv` automatically instead of reusing it.
+3. Install all necessary dependencies from `requirements.txt`.
+4. Detect an NVIDIA GPU and replace the default CPU-only PyTorch build with the official CUDA-enabled wheel.
+5. Print the final `torch` / CUDA runtime, device count, and GPU name so you can confirm whether training will use the GPU.
 
 If you have an NVIDIA GPU, the trainer should report a CUDA-enabled runtime such as `torch=2.9.1+cu128`, `cuda_available=True`, and your GPU name.
 If it still shows a CPU-only build, training will fall back to CPU unless you reinstall the CUDA wheel.
@@ -82,14 +89,22 @@ This writes:
 ### 5. Train the detector
 
 ```bash
-python src/train.py --dataset_dir dataset/final --model yolov8n --epochs 30 --batch_size 16
+python src/train.py --dataset_dir dataset/final --model yolov8n --epochs 30 --batch_size auto --runtime_preset throughput
 ```
 
 Or train directly from a collected CSV and let the script build the split for you:
 
 ```bash
-python src/train.py --train_csv data_sets/my_dataset/labels_enhanced.csv --train_dir data_sets/my_dataset/images --model yolov8n --epochs 30
+python src/train.py --train_csv data_sets/my_dataset/labels_enhanced.csv --train_dir data_sets/my_dataset/images --model yolov8n --epochs 30 --batch_size auto
 ```
+
+Useful training flags:
+
+- `--batch_size auto`: estimates a safe fixed batch size for the active NVIDIA GPU
+- `--batch_fraction 0.70`: controls how much GPU memory auto batch sizing targets
+- `--runtime_preset throughput|balanced|reproducible`: switches between max throughput and stricter determinism
+- `--cache_mode auto|ram|disk|off`: caches the prepared dataset automatically based on image size
+- `--compile_mode auto|off|reduce-overhead|max-autotune-no-cudagraphs`: controls `torch.compile`
 
 ### 6. Run inference
 
@@ -114,3 +129,14 @@ The bbox CSV now uses these core columns:
 - `auto_labeled`
 
 Coordinates are normalized to `[0, 1]` in YOLO format.
+
+## Training Outputs
+
+Each training run now writes to an explicit run directory under your chosen output root:
+
+- `<output_dir>/runs/<run_name>/`
+
+Stable artifacts are also copied to:
+
+- `<output_dir>/best_model.pt`
+- `<output_dir>/training_summary.json`

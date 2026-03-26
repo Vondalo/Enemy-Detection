@@ -3,6 +3,7 @@ import { X, Minus, Square, Copy, Target, Gamepad2, MonitorPlay, Database, BrainC
 import './index.css';
 import CollectorWorkspace from './CollectorWorkspace';
 import DatasetViewerWorkspace from './DatasetViewerWorkspace';
+import VideoTesterWorkspace from './VideoTesterWorkspace';
 
 const TitleBar = () => (
     <div className="h-8 bg-stone-950 border-b border-rose-950 flex items-center justify-between px-4 drag select-none">
@@ -74,21 +75,65 @@ const getDetectionChrome = (className) => {
     };
 };
 
+const createEmptyPredictionSummary = () => ({
+    count: 0,
+    topDetection: null,
+    modelPath: null,
+    savedImagePath: null,
+    classSummary: {
+        enemy: 0,
+        player: 0,
+        unknown: 0,
+    },
+});
+
+const resolveDetectionClassKey = (detection) => {
+    const normalized = String(detection?.class_key || detection?.class_name || '').trim().toLowerCase();
+    if (normalized.includes('player')) return 'player';
+    if (normalized.includes('enemy')) return 'enemy';
+    return normalized || 'unknown';
+};
+
+const formatDetectionClassName = (detection) => {
+    const classKey = resolveDetectionClassKey(detection);
+    if (classKey === 'player') return 'Player';
+    if (classKey === 'enemy') return 'Enemy';
+    return detection?.class_name || 'Unknown';
+};
+
+const summarizeDetections = (detections) => {
+    const summary = {
+        enemy: 0,
+        player: 0,
+        unknown: 0,
+    };
+
+    detections.forEach((detection) => {
+        const classKey = resolveDetectionClassKey(detection);
+        if (Object.prototype.hasOwnProperty.call(summary, classKey)) {
+            summary[classKey] += 1;
+        } else {
+            summary.unknown += 1;
+        }
+    });
+
+    return summary;
+};
+
 const Presentation = () => {
     const [currentSlide, setCurrentSlide] = useState(0);
     const [logs, setLogs] = useState([]);
     const [isRunning, setIsRunning] = useState(false);
+    const [videoPredictionActive, setVideoPredictionActive] = useState(false);
     const [videoLinks, setVideoLinks] = useState('');
     const logsEndRef = useRef(null);
 
     // Predictor State
     const [imagePath, setImagePath] = useState(null);
     const [detections, setDetections] = useState([]);
-    const [truth, setTruth] = useState(null);
     const [predicting, setPredicting] = useState(false);
-    const [showDetectionOverlays, setShowDetectionOverlays] = useState(false);
-    const imgRef = useRef(null);
-    const [imgDims, setImgDims] = useState({ width: 0, height: 0 });
+    const [hasPredictionResult, setHasPredictionResult] = useState(false);
+    const [predictionSummary, setPredictionSummary] = useState(createEmptyPredictionSummary);
 
     // Dataset Manager State
     const [datasets, setDatasets] = useState([]);
@@ -314,6 +359,11 @@ const Presentation = () => {
 
     const handleCancel = async () => {
         if (!isRunning) return;
+        if (videoPredictionActive) {
+            setLogs(prev => [...prev, '\n[System] Stopping active video prediction session...']);
+            await window.electronAPI.stopVideoPrediction();
+            return;
+        }
         setLogs(prev => [...prev, '\n[System] Aborting current pipeline process via KILL signal...']);
         await window.electronAPI.cancelPipeline();
         setIsRunning(false);
@@ -324,8 +374,8 @@ const Presentation = () => {
         if (path) {
             setImagePath(path);
             setDetections([]);
-            setTruth(null);
-            setShowDetectionOverlays(false);
+            setHasPredictionResult(false);
+            setPredictionSummary(createEmptyPredictionSummary());
         }
     };
 
@@ -338,17 +388,36 @@ const Presentation = () => {
             if (result.error) {
                 setLogs(prev => [...prev, `[Error] ${result.error}`]);
             } else {
-                const nextDetections = result.detections || [];
-                if (result.saved_image_path) {
-                    setImagePath(result.saved_image_path);
-                    setShowDetectionOverlays(false);
-                } else {
-                    setShowDetectionOverlays(true);
-                }
+                const nextDetections = (result.detections || []).map((detection) => ({
+                    ...detection,
+                    class_key: resolveDetectionClassKey(detection),
+                    class_name: formatDetectionClassName(detection),
+                }));
+                const topDetection = result.top_detection
+                    ? {
+                        ...result.top_detection,
+                        class_key: resolveDetectionClassKey(result.top_detection),
+                        class_name: formatDetectionClassName(result.top_detection),
+                    }
+                    : null;
+                const nextSummary = {
+                    enemy: Number(result.class_summary?.enemy || 0),
+                    player: Number(result.class_summary?.player || 0),
+                    unknown: 0,
+                    ...summarizeDetections(nextDetections),
+                };
+
                 setDetections(nextDetections);
-                setTruth(result.truth);
-                if (result.top_detection) {
-                    const top = result.top_detection;
+                setHasPredictionResult(true);
+                setPredictionSummary({
+                    count: typeof result.count === 'number' ? result.count : nextDetections.length,
+                    topDetection,
+                    modelPath: result.model_path || null,
+                    savedImagePath: result.saved_image_path || null,
+                    classSummary: nextSummary,
+                });
+                if (topDetection) {
+                    const top = topDetection;
                     setLogs(prev => [...prev, `[Success] Found ${result.count} detection(s). Top detection: ${top.class_name} ${(top.confidence * 100).toFixed(1)}% @ [${top.x_center.toFixed(3)}, ${top.y_center.toFixed(3)}]`]);
                 } else {
                     setLogs(prev => [...prev, `[Success] No detections above threshold.`]);
@@ -421,20 +490,6 @@ const Presentation = () => {
         }
         setIsRunning(false);
     };
-
-    const updateImageDims = () => {
-        if (imgRef.current) {
-            setImgDims({
-                width: imgRef.current.clientWidth,
-                height: imgRef.current.clientHeight
-            });
-        }
-    };
-
-    useEffect(() => {
-        window.addEventListener('resize', updateImageDims);
-        return () => window.removeEventListener('resize', updateImageDims);
-    }, []);
 
     const renderTerminal = (compact = false) => (
         <div className={`bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-2xl flex flex-col font-mono text-sm ${compact ? 'mt-4 h-40 max-h-40' : 'mt-6 h-64 max-h-96'}`}>
@@ -1058,37 +1113,157 @@ const Presentation = () => {
                             <p>Select a screenshot to begin analysis</p>
                         </div>
                     ) : (
-                        <div className="rounded-xl border-2 border-slate-700 bg-black flex-1 min-h-[300px] flex items-center justify-center overflow-hidden p-6 py-12">
-                            <div className="relative inline-block max-w-full max-h-full shadow-2xl">
-                                <img 
-                                    src={`file://${imagePath}`} 
-                                    alt="Input" 
-                                    className="max-w-full max-h-[45vh] object-contain block filter brightness-110 contrast-125 saturate-150 rounded" 
-                                />
-                                {showDetectionOverlays && detections.map((detection, index) => {
-                                    const chrome = getDetectionChrome(detection.class_name);
-                                    return (
-                                        <div
-                                            key={`${index}-${detection.class_id}-${detection.confidence}`}
-                                            className={`absolute border-2 ${chrome.border} ${chrome.fill} ${chrome.glow} z-10 transition-all duration-500 pointer-events-none`}
-                                            style={{
-                                                left: `${(detection.x_center - detection.width / 2) * 100}%`,
-                                                top: `${(detection.y_center - detection.height / 2) * 100}%`,
-                                                width: `${detection.width * 100}%`,
-                                                height: `${detection.height * 100}%`,
-                                            }}
-                                        >
-                                            <div className={`absolute -top-6 left-0 px-2 py-0.5 ${chrome.badge} text-[10px] font-bold uppercase tracking-wider text-white rounded`}>
-                                                {detection.class_name} {(detection.confidence * 100).toFixed(0)}%
+                        <div className="grid flex-1 min-h-[300px] grid-cols-1 xl:grid-cols-[minmax(0,1.45fr)_380px] gap-6">
+                            <div className="rounded-xl border-2 border-slate-700 bg-black min-h-[300px] flex items-center justify-center overflow-hidden p-6 py-12">
+                                <div className="relative inline-block max-w-full max-h-full shadow-2xl">
+                                    <img 
+                                        src={`file://${imagePath}`} 
+                                        alt="Input" 
+                                        className="max-w-full max-h-[45vh] object-contain block filter brightness-110 contrast-125 saturate-150 rounded" 
+                                    />
+                                    {detections.map((detection, index) => {
+                                        const chrome = getDetectionChrome(detection.class_key || detection.class_name);
+                                        return (
+                                            <div
+                                                key={`${index}-${detection.class_id}-${detection.confidence}`}
+                                                className={`absolute border-2 ${chrome.border} ${chrome.fill} ${chrome.glow} z-10 transition-all duration-500 pointer-events-none`}
+                                                style={{
+                                                    left: `${(detection.x_center - detection.width / 2) * 100}%`,
+                                                    top: `${(detection.y_center - detection.height / 2) * 100}%`,
+                                                    width: `${detection.width * 100}%`,
+                                                    height: `${detection.height * 100}%`,
+                                                }}
+                                            >
+                                                <div className={`absolute -top-6 left-0 px-2 py-0.5 ${chrome.badge} text-[10px] font-bold uppercase tracking-wider text-white rounded`}>
+                                                    {detection.class_name} {(detection.confidence * 100).toFixed(0)}%
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 flex flex-col gap-5 min-h-[300px]">
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4">
+                                        <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-rose-300">Enemies</div>
+                                        <div className="mt-2 text-3xl font-black text-white">{predictionSummary.classSummary.enemy}</div>
+                                    </div>
+                                    <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 p-4">
+                                        <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-amber-200">Players</div>
+                                        <div className="mt-2 text-3xl font-black text-white">{predictionSummary.classSummary.player}</div>
+                                    </div>
+                                </div>
+
+                                <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-4">
+                                    <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Result</div>
+                                    {hasPredictionResult ? (
+                                        <div className="mt-3 space-y-2 text-sm text-slate-200">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <span className="text-slate-400">Detections</span>
+                                                <span className="font-bold text-white">{predictionSummary.count}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between gap-3">
+                                                <span className="text-slate-400">Top Class</span>
+                                                <span className="font-bold text-white">{predictionSummary.topDetection?.class_name || 'None'}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between gap-3">
+                                                <span className="text-slate-400">Top Confidence</span>
+                                                <span className="font-bold text-white">
+                                                    {predictionSummary.topDetection ? `${(predictionSummary.topDetection.confidence * 100).toFixed(1)}%` : 'n/a'}
+                                                </span>
                                             </div>
                                         </div>
-                                    );
-                                })}
+                                    ) : (
+                                        <p className="mt-3 text-sm text-slate-400 leading-relaxed">
+                                            Run the tester to classify each visible character as Enemy or Player and draw the predicted bounding boxes directly on the screenshot.
+                                        </p>
+                                    )}
+                                </div>
+
+                                <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-4 flex flex-col gap-3 min-h-0 flex-1">
+                                    <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">
+                                        <ImageIcon size={14} />
+                                        Detection List
+                                    </div>
+                                    {detections.length ? (
+                                        <div className="flex flex-col gap-2 overflow-y-auto pr-1">
+                                            {detections.map((detection, index) => {
+                                                const chrome = getDetectionChrome(detection.class_key || detection.class_name);
+                                                return (
+                                                    <div
+                                                        key={`detection-card-${index}-${detection.class_id}-${detection.confidence}`}
+                                                        className="rounded-lg border border-slate-700 bg-slate-950/80 p-3"
+                                                    >
+                                                        <div className="flex items-start justify-between gap-3">
+                                                            <div>
+                                                                <div className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white ${chrome.badge}`}>
+                                                                    {detection.class_name}
+                                                                </div>
+                                                                <div className="mt-2 text-xs text-slate-400">
+                                                                    Center: [{detection.x_center.toFixed(3)}, {detection.y_center.toFixed(3)}]
+                                                                </div>
+                                                                <div className="text-xs text-slate-500">
+                                                                    Size: {detection.width.toFixed(3)} x {detection.height.toFixed(3)}
+                                                                </div>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <div className="text-lg font-black text-white">
+                                                                    {(detection.confidence * 100).toFixed(0)}%
+                                                                </div>
+                                                                <div className="text-[11px] uppercase tracking-widest text-slate-500">
+                                                                    confidence
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : (
+                                        <div className="flex-1 flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-700 text-center text-slate-500 p-6">
+                                            <ImageIcon size={24} className="mb-3 opacity-60" />
+                                            <p className="text-sm">
+                                                {hasPredictionResult ? 'No detections passed the current confidence threshold.' : 'Pick an image and run detection to populate the list.'}
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {predictionSummary.modelPath && (
+                                    <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-3 text-xs text-slate-400 leading-relaxed">
+                                        <div className="font-bold uppercase tracking-[0.2em] text-slate-500 mb-2">Model</div>
+                                        <div className="break-all">{predictionSummary.modelPath}</div>
+                                    </div>
+                                )}
+
+                                {predictionSummary.savedImagePath && (
+                                    <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-3 text-xs text-slate-400 leading-relaxed">
+                                        <div className="font-bold uppercase tracking-[0.2em] text-slate-500 mb-2">Annotated Render</div>
+                                        <div className="break-all">{predictionSummary.savedImagePath}</div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
                     {renderTerminal()}
                 </div>
+            )
+        },
+        {
+            id: 'video-tester',
+            title: "Video Tester",
+            subtitle: "Run YOLO over gameplay clips in real time",
+            icon: <Gamepad2 size={24} />,
+            content: (
+                <VideoTesterWorkspace
+                    appendLog={appendLog}
+                    renderTerminal={renderTerminal}
+                    isAppBusy={isRunning}
+                    setAppBusy={setIsRunning}
+                    isVideoPredictionActive={videoPredictionActive}
+                    setVideoPredictionActive={setVideoPredictionActive}
+                />
             )
         },
         {

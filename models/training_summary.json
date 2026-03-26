@@ -1,0 +1,39 @@
+{
+  "chosen_model": "yolov8m.pt",
+  "best_weights": "models\\runs\\enemy_detector\\weights\\best.pt",
+  "stable_best_model": "models\\best_model.pt",
+  "dataset": {
+    "dataset_mode": "generated_from_csv",
+    "data_yaml": "models\\prepared_dataset\\data.yaml",
+    "class_names": [
+      "enemy",
+      "player"
+    ],
+    "train_annotations": 308,
+    "val_annotations": 847,
+    "train_images": 92,
+    "val_images": 213,
+    "train_video_ids": [
+      "Federico_sammelt__i_tried_the_new_season [C-SDrECvTa4]"
+    ],
+    "val_video_ids": [
+      "Ich_sammel__i_tried_the_new_season [C-SDrECvTa4]"
+    ],
+    "bbox_sources": {
+      "manual_box": 1155
+    }
+  },
+  "epochs": 50,
+  "batch_size": 16,
+  "imgsz": 640,
+  "requested_device_mode": "cuda",
+  "device": "0",
+  "use_cuda": true,
+  "workers": 4,
+  "runtime_flags": {
+    "amp": true,
+    "tf32_matmul": true,
+    "tf32_cudnn": true,
+    "cudnn_benchmark": true
+  }
+}

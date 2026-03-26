@@ -2,10 +2,15 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   selectImage: () => ipcRenderer.invoke('select-image'),
+  selectVideo: () => ipcRenderer.invoke('select-video'),
   runPrediction: (imagePath) => ipcRenderer.invoke('run-prediction', imagePath),
+  startVideoPrediction: (payload) => ipcRenderer.invoke('start-video-prediction', payload),
+  stopVideoPrediction: () => ipcRenderer.invoke('stop-video-prediction'),
   runPipelineStep: (stepName, args) => ipcRenderer.invoke('run-pipeline-step', stepName, args),
   onPipelineOutput: (callback) => ipcRenderer.on('pipeline-output', (_event, data) => callback(data)),
+  onVideoPredictionEvent: (callback) => ipcRenderer.on('video-prediction-event', (_event, data) => callback(data)),
   removePipelineOutputListener: () => ipcRenderer.removeAllListeners('pipeline-output'),
+  removeVideoPredictionListener: () => ipcRenderer.removeAllListeners('video-prediction-event'),
   saveLinks: (linksText) => ipcRenderer.invoke('save-links', linksText),
   clearVideos: () => ipcRenderer.invoke('clear-videos'),
   cancelPipeline: () => ipcRenderer.invoke('cancel-pipeline'),

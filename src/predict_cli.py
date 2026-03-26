@@ -35,6 +35,21 @@ def _box_class_id(box) -> int:
     return int(class_id)
 
 
+def _normalize_class_name(raw_name: str | int) -> tuple[str, str]:
+    text = str(raw_name).strip()
+    normalized = text.lower()
+
+    if normalized in {"enemy", "enemies", "opponent", "opponents", "target"}:
+        return "enemy", "Enemy"
+    if normalized in {"player", "players", "friendly", "friend", "teammate", "ally"}:
+        return "player", "Player"
+
+    if not text:
+        return "unknown", "Unknown"
+
+    return normalized, text.title()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run object detection on a single image.")
     parser.add_argument("image_path", help="Path to the input image.")
@@ -67,6 +82,7 @@ def main():
         )[0]
 
         detections = []
+        class_summary = {"enemy": 0, "player": 0}
         image_width, image_height = result.orig_shape[1], result.orig_shape[0]
         if isinstance(result.names, dict):
             names = result.names
@@ -82,11 +98,23 @@ def main():
             x_center = x1 + width / 2
             y_center = y1 + height / 2
             class_id = _box_class_id(box)
+            raw_class_name = names.get(class_id, str(class_id))
+            class_key, class_name = _normalize_class_name(raw_class_name)
+            if class_key in class_summary:
+                class_summary[class_key] += 1
             detections.append({
                 "class_id": class_id,
-                "class_name": names.get(class_id, str(class_id)),
+                "class_key": class_key,
+                "class_name": class_name,
+                "model_class_name": str(raw_class_name),
                 "confidence": _box_confidence(box),
                 "bbox_xyxy": [x1, y1, x2, y2],
+                "bbox_xyxy_normalized": [
+                    x1 / image_width,
+                    y1 / image_height,
+                    x2 / image_width,
+                    y2 / image_height,
+                ],
                 "x_center": x_center / image_width,
                 "y_center": y_center / image_height,
                 "width": width / image_width,
@@ -108,6 +136,8 @@ def main():
             "detections": detections,
             "count": len(detections),
             "top_detection": top_detection,
+            "class_summary": class_summary,
+            "image_size": {"width": image_width, "height": image_height},
             "prediction": [top_detection["x_center"], top_detection["y_center"]] if top_detection else None,
             "truth": None,
             "saved_image_path": saved_image_path,
