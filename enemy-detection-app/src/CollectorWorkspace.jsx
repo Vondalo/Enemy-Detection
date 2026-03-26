@@ -398,7 +398,7 @@ export default function CollectorWorkspace({ session, appendLog, onClose, onSess
             : clampBox({ ...rawBox, class_id: selectedClass.id, class_name: selectedClass.name }, videoMeta.width, videoMeta.height);
 
         setCurrentBox(nextBox);
-        setStatus(`${selectedClass.name} box ready. Press Enter, Add Box, or Save And Next.`);
+        setStatus(`${selectedClass.name} box ready. Press X, Add Box, or Save And Next.`);
         renderCanvas(nextBox);
     };
 
@@ -482,7 +482,7 @@ export default function CollectorWorkspace({ session, appendLog, onClose, onSess
                 return;
             }
 
-            if (event.key === 'Enter') {
+            if (event.key.toLowerCase() === 'x') {
                 event.preventDefault();
                 saveFrame(!event.shiftKey);
                 return;
@@ -640,8 +640,8 @@ export default function CollectorWorkspace({ session, appendLog, onClose, onSess
                     <div className="space-y-2 text-sm text-slate-300">
                         <div><span className="text-white font-semibold">1</span> switches the draft label to enemy.</div>
                         <div><span className="text-white font-semibold">2</span> switches the draft label to player.</div>
-                        <div><span className="text-white font-semibold">Enter</span> saves the active box and moves to the next frame.</div>
-                        <div><span className="text-white font-semibold">Shift + Enter</span> saves the active box and stays on the same frame so you can add another box.</div>
+                        <div><span className="text-white font-semibold">X</span> saves the active box and moves to the next frame.</div>
+                        <div><span className="text-white font-semibold">Shift + X</span> saves the active box and stays on the same frame so you can add another box.</div>
                         <div><span className="text-white font-semibold">Space</span> plays or pauses.</div>
                         <div><span className="text-white font-semibold">Arrow Left / Right</span> moves by Step Frames.</div>
                         <div><span className="text-white font-semibold">Shift + Arrows</span> moves by Jump Frames.</div>

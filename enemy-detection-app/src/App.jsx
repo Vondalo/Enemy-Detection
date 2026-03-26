@@ -198,7 +198,7 @@ const Presentation = () => {
         if (result.success) {
             setCollectorSession(result);
             appendLog(`[Ready] Manual annotator loaded inside the app for ${result.videoName}.`);
-            appendLog(`[Hint] Press 1 for enemy, 2 for player, Shift+Enter to add another box on the same frame, and Enter to save and move on.`);
+            appendLog(`[Hint] Press 1 for enemy, 2 for player, Shift+X to add another box on the same frame, and X to save and move on.`);
         } else {
             appendLog(`\n[Error] ${result.error}`);
         }
@@ -407,9 +407,27 @@ const Presentation = () => {
                         <button 
                             onClick={handleDownloadStep}
                             disabled={isRunning || !videoLinks.trim()}
-                            className="px-6 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-lg transition text-white font-bold"
-                        >Start Download</button>
+                            className="px-6 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-lg transition text-white font-bold flex justify-center items-center gap-2"
+                        >
+                            {isRunning && currentSlide === 0 ? (
+                                <>
+                                    <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    Downloading...
+                                </>
+                            ) : (
+                                "Start Download"
+                            )}
+                        </button>
+                        {isRunning && currentSlide === 0 && (
+                            <div className="w-full bg-slate-900 rounded-full h-2 mt-2 overflow-hidden border border-slate-700">
+                                <div className="bg-sky-500 h-full w-1/2 rounded-full animate-progress"></div>
+                            </div>
+                        )}
                     </div>
+                    {renderTerminal()}
                 </div>
             )
         },
@@ -479,7 +497,7 @@ const Presentation = () => {
                                             <div className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-400 mb-2">Quick Controls</div>
                                             <div className="text-sm text-slate-300 space-y-2">
                                                 <p><span className="text-white font-semibold">1</span> selects enemy and <span className="text-white font-semibold">2</span> selects player.</p>
-                                                <p><span className="text-white font-semibold">Shift + Enter</span> adds another labeled box on the same frame, and <span className="text-white font-semibold">Enter</span> saves and advances.</p>
+                                                <p><span className="text-white font-semibold">Shift + X</span> adds another labeled box on the same frame, and <span className="text-white font-semibold">X</span> saves and advances.</p>
                                                 <p><span className="text-white font-semibold">Arrow keys</span> move frame by frame, and <span className="text-white font-semibold">Shift + Arrows</span> jumps further.</p>
                                                 <p><span className="text-white font-semibold">D</span> duplicates the last saved box and <span className="text-white font-semibold">S</span> skips the current frame.</p>
                                             </div>
