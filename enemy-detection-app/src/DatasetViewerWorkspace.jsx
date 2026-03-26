@@ -6,7 +6,7 @@ const MIN_BOX = 8;
 const RESIZE_HANDLE = 14;
 const CLASS_OPTIONS = [
     { id: 0, name: 'enemy', color: '#ef4444', accent: 'border-rose-500/40 bg-rose-500/10 text-rose-100' },
-    { id: 1, name: 'player', color: '#38bdf8', accent: 'border-sky-500/40 bg-sky-500/10 text-sky-100' },
+    { id: 1, name: 'player', color: '#f59e0b', accent: 'border-amber-500/40 bg-amber-500/10 text-amber-100' },
 ];
 const DEFAULT_CLASS = CLASS_OPTIONS[0];
 
@@ -646,13 +646,13 @@ export default function DatasetViewerWorkspace({ dataset, csvName, appendLog, on
                 <div className="flex flex-col gap-4">
                     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
                         <div>
-                            <div className="text-xs font-black uppercase tracking-[0.25em] text-sky-400">Dataset Viewer</div>
+                            <div className="text-xs font-black uppercase tracking-[0.25em] text-rose-400">Dataset Viewer</div>
                             <h3 className="text-xl font-bold text-white mt-1">{dataset.name}</h3>
                             <p className="text-sm text-slate-400 mt-1">{currentEntry.filename} - image {currentIndex + 1} / {entries.length}</p>
                         </div>
                         <div className="flex flex-wrap gap-2">
                             <button onClick={() => setCurrentIndex((prev) => clamp(prev - 1, 0, Math.max(0, entries.length - 1)))} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm font-semibold flex items-center gap-2 transition"><ArrowLeft size={16} />Prev</button>
-                            <button onClick={() => saveCurrentImage(true)} disabled={isSaving || !currentEntry.imagePath} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 rounded-lg text-sm font-semibold text-white flex items-center gap-2 transition"><Save size={16} />{isSaving ? 'Saving...' : 'Save & Next'}</button>
+                            <button onClick={() => saveCurrentImage(true)} disabled={isSaving || !currentEntry.imagePath} className="px-3 py-2 bg-orange-600 hover:bg-orange-500 disabled:opacity-60 rounded-lg text-sm font-semibold text-white flex items-center gap-2 transition"><Save size={16} />{isSaving ? 'Saving...' : 'Save & Next'}</button>
                             <button onClick={() => setCurrentIndex((prev) => clamp(prev + 1, 0, Math.max(0, entries.length - 1)))} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm font-semibold flex items-center gap-2 transition">Next<ArrowRight size={16} /></button>
                         </div>
                     </div>
@@ -736,8 +736,8 @@ export default function DatasetViewerWorkspace({ dataset, csvName, appendLog, on
                     </div>
 
                     <div className="flex flex-wrap gap-3">
-                        <button onClick={addDraftBox} disabled={!currentBox} className="px-4 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 rounded-xl text-sm font-bold text-white flex items-center gap-2 transition"><Plus size={16} />Add Draft Box</button>
-                        <button onClick={() => saveCurrentImage(false)} disabled={isSaving || !currentEntry.imagePath || (!currentEntry.dirty && !currentBox)} className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 rounded-xl text-sm font-bold text-white flex items-center gap-2 transition"><Save size={16} />Save Image</button>
+                        <button onClick={addDraftBox} disabled={!currentBox} className="px-4 py-2.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-60 rounded-xl text-sm font-bold text-white flex items-center gap-2 transition"><Plus size={16} />Add Draft Box</button>
+                        <button onClick={() => saveCurrentImage(false)} disabled={isSaving || !currentEntry.imagePath || (!currentEntry.dirty && !currentBox)} className="px-4 py-2.5 bg-orange-600 hover:bg-orange-500 disabled:opacity-60 rounded-xl text-sm font-bold text-white flex items-center gap-2 transition"><Save size={16} />Save Image</button>
                         <button onClick={deleteSelectedBox} disabled={selectedBoxIndex === null} className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-60 rounded-xl text-sm font-semibold flex items-center gap-2 transition"><Trash2 size={16} />Delete Selected Box</button>
                         <button onClick={clearDraft} disabled={!currentBox} className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-60 rounded-xl text-sm font-semibold flex items-center gap-2 transition"><RotateCcw size={16} />Clear Draft</button>
                         <button onClick={revertCurrentImage} disabled={!currentEntry.dirty && !currentBox} className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-60 rounded-xl text-sm font-semibold flex items-center gap-2 transition"><RotateCcw size={16} />Revert Unsaved</button>
@@ -756,7 +756,7 @@ export default function DatasetViewerWorkspace({ dataset, csvName, appendLog, on
 
             <div className="flex flex-col gap-4 xl:max-w-[400px]">
                 <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 lg:p-5">
-                    <div className="flex items-center gap-2 text-sky-400 mb-3"><CircleHelp size={16} /><span className="text-xs font-black uppercase tracking-[0.25em]">How To Edit</span></div>
+                    <div className="flex items-center gap-2 text-rose-400 mb-3"><CircleHelp size={16} /><span className="text-xs font-black uppercase tracking-[0.25em]">How To Edit</span></div>
                     <div className="space-y-2 text-sm text-slate-300">
                         <div>Click an existing box to select it.</div>
                         <div>Drag inside a selected box to move it.</div>
@@ -768,7 +768,7 @@ export default function DatasetViewerWorkspace({ dataset, csvName, appendLog, on
                 </div>
 
                 <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 lg:p-5">
-                    <div className="flex items-center gap-2 text-indigo-400 mb-3"><Keyboard size={16} /><span className="text-xs font-black uppercase tracking-[0.25em]">Keyboard Controls</span></div>
+                    <div className="flex items-center gap-2 text-orange-300 mb-3"><Keyboard size={16} /><span className="text-xs font-black uppercase tracking-[0.25em]">Keyboard Controls</span></div>
                     <div className="space-y-2 text-sm text-slate-300">
                         <div><span className="text-white font-semibold">1</span> sets the class to enemy.</div>
                         <div><span className="text-white font-semibold">2</span> sets the class to player.</div>
@@ -782,13 +782,13 @@ export default function DatasetViewerWorkspace({ dataset, csvName, appendLog, on
                 </div>
 
                 <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 lg:p-5">
-                    <div className="flex items-center gap-2 text-emerald-400 mb-3"><ImageIcon size={16} /><span className="text-xs font-black uppercase tracking-[0.25em]">Image List</span></div>
+                    <div className="flex items-center gap-2 text-amber-300 mb-3"><ImageIcon size={16} /><span className="text-xs font-black uppercase tracking-[0.25em]">Image List</span></div>
                     <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
                         {entries.map((entry, index) => (
                             <button
                                 key={entry.filename}
                                 onClick={() => setCurrentIndex(index)}
-                                className={`w-full text-left rounded-xl border px-3 py-3 transition ${index === currentIndex ? 'border-sky-500/40 bg-sky-500/10' : 'border-slate-800 bg-slate-950/70 hover:bg-slate-900'}`}
+                                className={`w-full text-left rounded-xl border px-3 py-3 transition ${index === currentIndex ? 'border-rose-500/40 bg-rose-500/10' : 'border-slate-800 bg-slate-950/70 hover:bg-slate-900'}`}
                             >
                                 <div className="flex items-center justify-between gap-3">
                                     <div className="min-w-0">
@@ -804,7 +804,7 @@ export default function DatasetViewerWorkspace({ dataset, csvName, appendLog, on
             </div>
 
             {toast && (
-                <div className={`pointer-events-none fixed right-5 top-16 z-50 rounded-xl border px-4 py-3 text-sm font-semibold shadow-2xl backdrop-blur ${toast.tone === 'error' ? 'border-rose-500/40 bg-rose-500/15 text-rose-100' : 'border-emerald-500/40 bg-emerald-500/15 text-emerald-50'}`}>
+                <div className={`pointer-events-none fixed right-5 top-16 z-50 rounded-xl border px-4 py-3 text-sm font-semibold shadow-2xl backdrop-blur ${toast.tone === 'error' ? 'border-rose-500/40 bg-rose-500/15 text-rose-100' : 'border-orange-500/40 bg-orange-500/15 text-orange-50'}`}>
                     {toast.message}
                 </div>
             )}

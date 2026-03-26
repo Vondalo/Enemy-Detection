@@ -22,9 +22,15 @@ html, body, #root {
     height: 100%;
     margin: 0;
     padding: 0;
-    background-color: #020617;
-    color: #e2e8f0;
+    background:
+        radial-gradient(circle at top, rgba(127, 29, 29, 0.35), transparent 45%),
+        linear-gradient(180deg, #1a0606 0%, #09090b 100%);
+    color: #f5f5f4;
     overflow: hidden; /* Prevent scrolling on the root */
+}
+
+body {
+    color-scheme: dark;
 }
 
 .drag {

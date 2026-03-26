@@ -5,21 +5,21 @@ import CollectorWorkspace from './CollectorWorkspace';
 import DatasetViewerWorkspace from './DatasetViewerWorkspace';
 
 const TitleBar = () => (
-    <div className="h-8 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 drag select-none">
+    <div className="h-8 bg-stone-950 border-b border-rose-950 flex items-center justify-between px-4 drag select-none">
         <div className="flex items-center gap-2">
-            <ScanEye size={16} className="text-blue-500" />
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Enemy Detection Hub</span>
+            <ScanEye size={16} className="text-rose-500" />
+            <span className="text-xs font-bold text-stone-300 uppercase tracking-widest">Enemy Detection Hub</span>
         </div>
         <div className="flex items-center no-drag">
             <button 
                 onClick={() => window.electronAPI.minimizeWindow()}
-                className="p-2 hover:bg-slate-800 text-slate-400 transition"
+                className="p-2 hover:bg-stone-900 text-stone-400 transition"
             >
                 <Minus size={14} />
             </button>
             <button 
                 onClick={() => window.electronAPI.maximizeWindow()}
-                className="p-2 hover:bg-slate-800 text-slate-400 transition"
+                className="p-2 hover:bg-stone-900 text-stone-400 transition"
             >
                 <Square size={12} />
             </button>
@@ -60,10 +60,10 @@ const getDetectionChrome = (className) => {
     const normalized = String(className || '').toLowerCase();
     if (normalized === 'player') {
         return {
-            border: 'border-sky-400/90',
-            fill: 'bg-sky-500/10',
-            glow: 'shadow-[0_0_20px_rgba(14,165,233,0.35)]',
-            badge: 'bg-sky-500/90',
+            border: 'border-amber-400/90',
+            fill: 'bg-amber-500/10',
+            glow: 'shadow-[0_0_20px_rgba(251,191,36,0.35)]',
+            badge: 'bg-amber-500/90',
         };
     }
     return {
@@ -442,7 +442,7 @@ const Presentation = () => {
                 <div className="flex gap-2.5 items-center">
                     <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
                     <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
-                    <div className="w-3 h-3 rounded-full bg-emerald-500/80"></div>
+                    <div className="w-3 h-3 rounded-full bg-amber-500/80"></div>
                     <span className="ml-2 text-slate-500 text-xs tracking-wider">TERMINAL</span>
                 </div>
                 {isRunning && (
@@ -451,7 +451,7 @@ const Presentation = () => {
                             onClick={handleCancel} 
                             className="px-3 py-1 bg-red-600/20 text-red-500 hover:bg-red-600/40 rounded border border-red-500/30 text-xs font-bold uppercase tracking-wider transition-colors shadow-lg shadow-red-900/20"
                         >Force Stop</button>
-                        <span className="text-emerald-400 text-xs animate-pulse">Running...</span>
+                        <span className="text-amber-300 text-xs animate-pulse">Running...</span>
                     </div>
                 )}
             </div>
@@ -481,12 +481,12 @@ const Presentation = () => {
                             value={videoLinks}
                             onChange={(e) => setVideoLinks(e.target.value)}
                             placeholder="Enter YouTube links..."
-                            className="w-full h-32 bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm text-slate-300 font-mono focus:outline-none focus:border-sky-500 transition-colors resize-none"
+                            className="w-full h-32 bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm text-slate-300 font-mono focus:outline-none focus:border-rose-500 transition-colors resize-none"
                         />
                         <button 
                             onClick={handleDownloadStep}
                             disabled={isRunning || !videoLinks.trim()}
-                            className="px-6 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-lg transition text-white font-bold flex justify-center items-center gap-2"
+                            className="px-6 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition text-white font-bold flex justify-center items-center gap-2 shadow-lg shadow-rose-950/30"
                         >
                             {isRunning && currentSlide === 0 ? (
                                 <>
@@ -502,7 +502,7 @@ const Presentation = () => {
                         </button>
                         {isRunning && currentSlide === 0 && (
                             <div className="w-full bg-slate-900 rounded-full h-2 mt-2 overflow-hidden border border-slate-700">
-                                <div className="bg-sky-500 h-full w-1/2 rounded-full animate-progress"></div>
+                                <div className="bg-rose-500 h-full w-1/2 rounded-full animate-progress"></div>
                             </div>
                         )}
                     </div>
@@ -532,7 +532,7 @@ const Presentation = () => {
                                         <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Video Source</label>
                                         <div className="flex gap-4">
                                             <select 
-                                                className="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                                className="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
                                                 value={selectedVideo}
                                                 onChange={(e) => setSelectedVideo(e.target.value)}
                                             >
@@ -556,7 +556,7 @@ const Presentation = () => {
                                         <input 
                                             type="text"
                                             placeholder="e.g. desert_outpost_labels"
-                                            className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                            className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
                                             value={collectionName}
                                             onChange={(e) => setCollectionName(e.target.value)}
                                         />
@@ -564,7 +564,7 @@ const Presentation = () => {
 
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div className="bg-slate-900/70 border border-slate-700 rounded-xl p-4">
-                                            <div className="text-[11px] font-black uppercase tracking-[0.24em] text-sky-400 mb-2">Manual Flow</div>
+                                            <div className="text-[11px] font-black uppercase tracking-[0.24em] text-rose-400 mb-2">Manual Flow</div>
                                             <div className="text-sm text-slate-300 space-y-2">
                                                 <p>Open the annotator inside the Electron app.</p>
                                                 <p>Choose <span className="text-white font-semibold">enemy</span> for opponents and <span className="text-white font-semibold">player</span> for your own character.</p>
@@ -573,7 +573,7 @@ const Presentation = () => {
                                             </div>
                                         </div>
                                         <div className="bg-slate-900/70 border border-slate-700 rounded-xl p-4">
-                                            <div className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-400 mb-2">Quick Controls</div>
+                                            <div className="text-[11px] font-black uppercase tracking-[0.24em] text-orange-300 mb-2">Quick Controls</div>
                                             <div className="text-sm text-slate-300 space-y-2">
                                                 <p><span className="text-white font-semibold">1</span> selects enemy and <span className="text-white font-semibold">2</span> selects player.</p>
                                                 <p><span className="text-white font-semibold">Shift + X</span> adds another labeled box on the same frame, and <span className="text-white font-semibold">X</span> saves and advances.</p>
@@ -586,7 +586,7 @@ const Presentation = () => {
                                     <button 
                                         onClick={() => handleRunDataCollection(selectedVideo)}
                                         disabled={isRunning || !selectedVideo}
-                                        className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-blue-900/20 text-sm font-bold flex justify-center items-center gap-2"
+                                        className="px-6 py-3 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-rose-950/30 text-sm font-bold flex justify-center items-center gap-2"
                                     >
                                         Open In-App Annotator <MonitorPlay size={18}/>
                                     </button>
@@ -619,7 +619,7 @@ const Presentation = () => {
                             <div className="flex flex-col gap-2">
                                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Dataset</label>
                                 <select 
-                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
                                     value={selectedDataset?.name || ''}
                                     onChange={(e) => {
                                         const ds = datasets.find(d => d.name === e.target.value);
@@ -635,7 +635,7 @@ const Presentation = () => {
                             <div className="flex flex-col gap-2">
                                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">CSV Labels</label>
                                 <select 
-                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
                                     value={selectedCsv}
                                     onChange={(e) => setSelectedCsv(e.target.value)}
                                 >
@@ -656,7 +656,7 @@ const Presentation = () => {
                             <button 
                                 onClick={handleRunFix}
                                 disabled={isFixing || !selectedDataset}
-                                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition font-bold text-sm text-white flex items-center justify-center gap-2 shadow-lg shadow-blue-900/20"
+                                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition font-bold text-sm text-white flex items-center justify-center gap-2 shadow-lg shadow-rose-950/30"
                             >
                                 {isFixing ? 'Cleaning...' : 'Apply Anti-Bias Fix (After)'}
                                 <BrainCircuit size={18} />
@@ -677,7 +677,7 @@ const Presentation = () => {
                             )}
                         </div>
                         <div className="bg-slate-900/50 rounded-xl border border-slate-800 flex flex-col items-center justify-center p-4 relative overflow-hidden group">
-                            <div className="absolute top-4 left-4 z-10 bg-blue-600/80 backdrop-blur px-3 py-1 rounded text-[10px] font-black uppercase tracking-widest text-white border border-blue-400/30">Neutralized & Balanced</div>
+                            <div className="absolute top-4 left-4 z-10 bg-rose-600/80 backdrop-blur px-3 py-1 rounded text-[10px] font-black uppercase tracking-widest text-white border border-rose-300/30">Neutralized & Balanced</div>
                             {afterImage ? (
                                 <img src={`file://${afterImage}?t=${new Date().getTime()}`} className="max-w-full max-h-full object-contain rounded shadow-2xl" alt="After" />
                             ) : (
@@ -704,7 +704,7 @@ const Presentation = () => {
                             <div className="flex flex-col gap-2">
                                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Source Dataset</label>
                                 <select 
-                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
                                     value={selectedDataset?.name || ''}
                                     onChange={(e) => {
                                         const ds = datasets.find(d => d.name === e.target.value);
@@ -718,7 +718,7 @@ const Presentation = () => {
                             <div className="flex flex-col gap-2">
                                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Source CSV</label>
                                 <select 
-                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
                                     value={selectedCsv}
                                     onChange={(e) => setSelectedCsv(e.target.value)}
                                 >
@@ -732,14 +732,14 @@ const Presentation = () => {
                             <input 
                                 type="text"
                                 placeholder="e.g. combined_augmented_v1"
-                                className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                                className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-orange-400"
                                 value={augmentationName}
                                 onChange={(e) => setAugmentationName(e.target.value)}
                             />
                         </div>
 
-                        <div className="bg-blue-900/20 border border-blue-800/50 p-4 rounded-lg">
-                            <h4 className="text-blue-400 text-xs font-bold uppercase tracking-widest mb-2">Augmentation Strategy</h4>
+                        <div className="bg-rose-900/20 border border-rose-800/50 p-4 rounded-lg">
+                            <h4 className="text-rose-300 text-xs font-bold uppercase tracking-widest mb-2">Augmentation Strategy</h4>
                             <ul className="text-xs text-slate-400 space-y-1">
                                 <li>• Spatially-aware augmentation (Edges/Corners priority)</li>
                                 <li>• Automatic bounding-box transformation for rotates/flips</li>
@@ -751,7 +751,7 @@ const Presentation = () => {
                         <button 
                             onClick={handleRunAugmentation}
                             disabled={isRunning || !selectedDataset}
-                            className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-indigo-900/20 text-sm font-bold flex justify-center items-center gap-2"
+                            className="px-6 py-3 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-orange-950/30 text-sm font-bold flex justify-center items-center gap-2"
                         >
                             Run Augmentation Pipeline <Layers size={18}/>
                         </button>
@@ -773,7 +773,7 @@ const Presentation = () => {
                             <input
                                 type="text"
                                 placeholder="e.g. merged_scrims_v1"
-                                className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
                                 value={mergeOutputName}
                                 onChange={(e) => setMergeOutputName(e.target.value)}
                             />
@@ -792,14 +792,14 @@ const Presentation = () => {
                                 datasets.map((dataset) => {
                                     const selection = mergeSelections[dataset.name] || {};
                                     return (
-                                        <div key={dataset.name} className={`rounded-xl border p-4 transition ${selection.enabled ? 'border-blue-500/40 bg-blue-500/10' : 'border-slate-800 bg-slate-900/60'}`}>
+                                        <div key={dataset.name} className={`rounded-xl border p-4 transition ${selection.enabled ? 'border-rose-500/40 bg-rose-500/10' : 'border-slate-800 bg-slate-900/60'}`}>
                                             <div className="flex flex-col lg:flex-row lg:items-center gap-3">
                                                 <label className="flex items-center gap-3 flex-1 cursor-pointer">
                                                     <input
                                                         type="checkbox"
                                                         checked={Boolean(selection.enabled)}
                                                         onChange={() => handleToggleMergeDataset(dataset.name)}
-                                                        className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-blue-500 focus:ring-blue-500"
+                                                        className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-rose-500 focus:ring-rose-500"
                                                     />
                                                     <div className="min-w-0">
                                                         <div className="text-sm font-semibold text-slate-100 truncate">{dataset.name}</div>
@@ -811,7 +811,7 @@ const Presentation = () => {
                                                     <select
                                                         value={selection.csvName || dataset.csvs?.[0] || ''}
                                                         onChange={(e) => handleMergeCsvChange(dataset.name, e.target.value)}
-                                                        className="bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                                        className="bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
                                                     >
                                                         {dataset.csvs?.map((csv) => <option key={csv} value={csv}>{csv}</option>)}
                                                     </select>
@@ -824,7 +824,7 @@ const Presentation = () => {
                         </div>
 
                         <div className="flex items-center gap-4 text-sm">
-                            <span className="text-blue-400 font-bold whitespace-nowrap">Selected Sources:</span>
+                            <span className="text-rose-400 font-bold whitespace-nowrap">Selected Sources:</span>
                             <div className="flex-1 px-3 py-2 bg-slate-900 rounded border border-slate-700 text-slate-300 font-mono text-xs overflow-hidden text-ellipsis italic">
                                 {selectedMergeSources.length > 0
                                     ? selectedMergeSources.map((source) => `${source.datasetName} -> ${source.csvName}`).join(' | ')
@@ -835,7 +835,7 @@ const Presentation = () => {
                         <button
                             onClick={handleRunMerge}
                             disabled={isRunning || selectedMergeSources.length < 2}
-                            className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-blue-900/20 text-sm font-bold flex justify-center items-center gap-2"
+                            className="px-6 py-3 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-rose-950/30 text-sm font-bold flex justify-center items-center gap-2"
                         >
                             Merge Selected Datasets <Copy size={18}/>
                         </button>
@@ -856,7 +856,7 @@ const Presentation = () => {
                             <div className="flex flex-col gap-2">
                                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Dataset</label>
                                 <select
-                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
                                     value={selectedDataset?.name || ''}
                                     onChange={(e) => {
                                         const ds = datasets.find(d => d.name === e.target.value);
@@ -871,7 +871,7 @@ const Presentation = () => {
                             <div className="flex flex-col gap-2">
                                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">CSV Labels</label>
                                 <select
-                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
                                     value={selectedCsv}
                                     onChange={(e) => setSelectedCsv(e.target.value)}
                                 >
@@ -1048,7 +1048,7 @@ const Presentation = () => {
                         <button 
                             onClick={handlePredict} 
                             disabled={!imagePath || predicting || isRunning}
-                            className="px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-blue-900/20 text-sm font-bold"
+                            className="px-6 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-rose-950/30 text-sm font-bold"
                         >Detect Characters</button>
                     </div>
 
@@ -1108,13 +1108,13 @@ const Presentation = () => {
     ];
 
     return (
-        <div className="flex flex-col h-screen w-full bg-slate-950 text-slate-200 overflow-hidden font-sans selection:bg-blue-500/30 border border-slate-800">
+        <div className="flex flex-col h-screen w-full bg-stone-950 text-stone-100 overflow-hidden font-sans selection:bg-rose-500/30 border border-rose-950">
             <TitleBar />
             
             {/* Header/Progress */}
             <div className="h-1.5 bg-slate-800 w-full relative z-40 no-drag">
                 <div 
-                    className="h-full bg-gradient-to-r from-blue-500 to-emerald-400 transition-all duration-500 ease-out"
+                    className="h-full bg-gradient-to-r from-rose-600 via-red-500 to-orange-400 transition-all duration-500 ease-out"
                     style={{ width: `${((currentSlide + 1) / slides.length) * 100}%` }}
                 />
             </div>
@@ -1133,7 +1133,7 @@ const Presentation = () => {
                             onClick={() => setCurrentSlide(index)}
                             className={`text-left px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3
                                 ${currentSlide === index 
-                                    ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' 
+                                    ? 'bg-rose-500/10 text-rose-300 border border-rose-500/20' 
                                     : 'text-slate-500 hover:bg-slate-900 hover:text-slate-300 border border-transparent'
                                 }`}
                         >
@@ -1146,7 +1146,7 @@ const Presentation = () => {
                 {/* Main Content Area */}
                 <div className="flex-1 flex flex-col relative bg-slate-950/50 rounded-2xl md:border border-slate-800/50 shadow-2xl overflow-hidden h-full no-drag">
                     <div className={`${isCollectorWorkspaceActive ? 'p-5 md:p-6 pb-0' : 'p-8 pb-0'} animate-fade-in-down border-b border-transparent`}>
-                        <div className="flex items-center gap-3 text-blue-400 mb-2">
+                        <div className="flex items-center gap-3 text-rose-400 mb-2">
                             {slides[currentSlide].icon}
                             <span className="text-xs font-mono uppercase tracking-widest opacity-75">Control Surface</span>
                         </div>
