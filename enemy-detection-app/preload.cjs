@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // New Dataset Management APIs
   listDatasets: () => ipcRenderer.invoke('list-datasets'),
+  mergeDatasets: (payload) => ipcRenderer.invoke('merge-datasets', payload),
   listDatasetImages: (datasetPath, csvName) => ipcRenderer.invoke('list-dataset-images', datasetPath, csvName),
   saveDatasetImageAnnotations: (payload) => ipcRenderer.invoke('save-dataset-image-annotations', payload),
   deleteDatasetImage: (datasetPath, csvName, filename) => ipcRenderer.invoke('delete-dataset-image', datasetPath, csvName, filename),

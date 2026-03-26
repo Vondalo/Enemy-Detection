@@ -103,6 +103,8 @@ const Presentation = () => {
     const [trainImageSize, setTrainImageSize] = useState(640);
     const [trainDeviceMode, setTrainDeviceMode] = useState('cuda');
     const [trainModel, setTrainModel] = useState('yolov8n');
+    const [mergeSelections, setMergeSelections] = useState({});
+    const [mergeOutputName, setMergeOutputName] = useState('');
 
     // Data Collector State
     const [videos, setVideos] = useState([]);
@@ -118,9 +120,27 @@ const Presentation = () => {
         setLogs(prev => [...prev, ...nextEntries]);
     };
 
+    const selectedMergeSources = datasets.filter((dataset) => mergeSelections[dataset.name]?.enabled)
+        .map((dataset) => ({
+            datasetName: dataset.name,
+            datasetPath: dataset.path,
+            csvName: mergeSelections[dataset.name]?.csvName || dataset.csvs?.[0] || '',
+        }))
+        .filter((dataset) => dataset.csvName);
+
     const handleFetchDatasets = async () => {
         const data = await window.electronAPI.listDatasets();
         setDatasets(data);
+        setMergeSelections((prev) => {
+            const next = {};
+            data.forEach((dataset) => {
+                next[dataset.name] = {
+                    enabled: prev[dataset.name]?.enabled || false,
+                    csvName: prev[dataset.name]?.csvName || dataset.csvs?.[0] || '',
+                };
+            });
+            return next;
+        });
         if (data.length > 0 && !selectedDataset) {
             setSelectedDataset(data[0]);
             setSelectedCsv(data[0].csvs[0]);
@@ -231,6 +251,65 @@ const Presentation = () => {
             setLogs(prev => [...prev, `\n[Error] ${result.error}`]);
         }
         setIsRunning(false);
+    };
+
+    const handleToggleMergeDataset = (datasetName) => {
+        setMergeSelections((prev) => ({
+            ...prev,
+            [datasetName]: {
+                enabled: !prev[datasetName]?.enabled,
+                csvName: prev[datasetName]?.csvName || datasets.find((dataset) => dataset.name === datasetName)?.csvs?.[0] || '',
+            },
+        }));
+    };
+
+    const handleMergeCsvChange = (datasetName, csvName) => {
+        setMergeSelections((prev) => ({
+            ...prev,
+            [datasetName]: {
+                enabled: prev[datasetName]?.enabled || false,
+                csvName,
+            },
+        }));
+    };
+
+    const handleRunMerge = async () => {
+        if (isRunning || selectedMergeSources.length < 2) return;
+
+        setIsRunning(true);
+        const finalName = mergeOutputName.trim() || `merged_${new Date().toISOString().split('T')[0]}`;
+        setLogs([
+            `> Starting dataset merge...`,
+            `> Output Dataset: ${finalName}`,
+            ...selectedMergeSources.map((source, index) => `> Source ${index + 1}: ${source.datasetName} -> ${source.csvName}`),
+        ]);
+
+        try {
+            const result = await window.electronAPI.mergeDatasets({
+                outputDatasetName: finalName,
+                sources: selectedMergeSources,
+            });
+
+            if (result.error) {
+                setLogs((prev) => [...prev, `\n[Error] ${result.error}`]);
+            } else {
+                setLogs((prev) => [
+                    ...prev,
+                    `\n[Success] Merge complete.`,
+                    `[System] Created ${result.datasetName} with ${result.totals.images} image(s) and ${result.totals.annotations} annotation row(s).`,
+                ]);
+                setMergeOutputName('');
+                await handleFetchDatasets();
+                const mergedDataset = datasets.find((dataset) => dataset.name === result.datasetName)
+                    || { name: result.datasetName, path: result.datasetPath, csvs: [result.csvName] };
+                setSelectedDataset(mergedDataset);
+                setSelectedCsv(result.csvName);
+            }
+        } catch (err) {
+            setLogs((prev) => [...prev, `\n[Exception] ${err.message}`]);
+        } finally {
+            setIsRunning(false);
+        }
     };
 
     const handleCancel = async () => {
@@ -675,6 +754,90 @@ const Presentation = () => {
                             className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-indigo-900/20 text-sm font-bold flex justify-center items-center gap-2"
                         >
                             Run Augmentation Pipeline <Layers size={18}/>
+                        </button>
+                    </div>
+                    {renderTerminal()}
+                </div>
+            )
+        },
+        {
+            id: 'merge',
+            title: "Dataset Merger",
+            subtitle: "Combine multiple labeled datasets into one",
+            icon: <Copy size={24} />,
+            content: (
+                <div className="flex flex-col h-full space-y-6">
+                    <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 flex flex-col gap-6">
+                        <div className="flex flex-col gap-2">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Merged Dataset Name</label>
+                            <input
+                                type="text"
+                                placeholder="e.g. merged_scrims_v1"
+                                className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                value={mergeOutputName}
+                                onChange={(e) => setMergeOutputName(e.target.value)}
+                            />
+                        </div>
+
+                        <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 leading-relaxed">
+                            Pick at least two source datasets below. The merger copies their images and labels into a new dataset folder, renames files to avoid collisions, and writes a combined CSV you can train on immediately.
+                        </div>
+
+                        <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+                            {datasets.length === 0 ? (
+                                <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-500">
+                                    No datasets found yet.
+                                </div>
+                            ) : (
+                                datasets.map((dataset) => {
+                                    const selection = mergeSelections[dataset.name] || {};
+                                    return (
+                                        <div key={dataset.name} className={`rounded-xl border p-4 transition ${selection.enabled ? 'border-blue-500/40 bg-blue-500/10' : 'border-slate-800 bg-slate-900/60'}`}>
+                                            <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+                                                <label className="flex items-center gap-3 flex-1 cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={Boolean(selection.enabled)}
+                                                        onChange={() => handleToggleMergeDataset(dataset.name)}
+                                                        className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-blue-500 focus:ring-blue-500"
+                                                    />
+                                                    <div className="min-w-0">
+                                                        <div className="text-sm font-semibold text-slate-100 truncate">{dataset.name}</div>
+                                                        <div className="text-xs text-slate-500 truncate">{dataset.path}</div>
+                                                    </div>
+                                                </label>
+                                                <div className="flex flex-col gap-1 min-w-[220px]">
+                                                    <label className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">CSV To Merge</label>
+                                                    <select
+                                                        value={selection.csvName || dataset.csvs?.[0] || ''}
+                                                        onChange={(e) => handleMergeCsvChange(dataset.name, e.target.value)}
+                                                        className="bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                                                    >
+                                                        {dataset.csvs?.map((csv) => <option key={csv} value={csv}>{csv}</option>)}
+                                                    </select>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+
+                        <div className="flex items-center gap-4 text-sm">
+                            <span className="text-blue-400 font-bold whitespace-nowrap">Selected Sources:</span>
+                            <div className="flex-1 px-3 py-2 bg-slate-900 rounded border border-slate-700 text-slate-300 font-mono text-xs overflow-hidden text-ellipsis italic">
+                                {selectedMergeSources.length > 0
+                                    ? selectedMergeSources.map((source) => `${source.datasetName} -> ${source.csvName}`).join(' | ')
+                                    : 'Choose two or more datasets'}
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={handleRunMerge}
+                            disabled={isRunning || selectedMergeSources.length < 2}
+                            className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-blue-900/20 text-sm font-bold flex justify-center items-center gap-2"
+                        >
+                            Merge Selected Datasets <Copy size={18}/>
                         </button>
                     </div>
                     {renderTerminal()}

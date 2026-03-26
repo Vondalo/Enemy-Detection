@@ -103,6 +103,10 @@ function getDatasetLabelsDir(datasetPath) {
   return path.join(datasetPath, 'labels');
 }
 
+function getDatasetLabelPath(datasetPath, filename) {
+  return path.join(getDatasetLabelsDir(datasetPath), `${getImageBasename(filename)}.txt`);
+}
+
 function getImageBasename(filename) {
   return path.parse(filename).name;
 }
@@ -206,6 +210,41 @@ function sanitizeDatasetName(name) {
     .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_')
     .replace(/\s+/g, '_')
     .slice(0, 80) || fallback;
+}
+
+function ensureUniqueFilename(filename, usedNames) {
+  const parsed = path.parse(filename);
+  const safeBase = sanitizeDatasetName(parsed.name || 'image');
+  const safeExt = parsed.ext || '.png';
+  let candidate = `${safeBase}${safeExt}`;
+  let counter = 2;
+
+  while (usedNames.has(candidate.toLowerCase())) {
+    candidate = `${safeBase}_${counter}${safeExt}`;
+    counter += 1;
+  }
+
+  usedNames.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function cloneAnnotationRow(row) {
+  const cloned = {};
+  Object.entries(row || {}).forEach(([key, value]) => {
+    cloned[key] = value ?? '';
+  });
+  return cloned;
+}
+
+function normalizeMergedSources(payloadSources) {
+  return (Array.isArray(payloadSources) ? payloadSources : [])
+    .filter(Boolean)
+    .map((source) => ({
+      datasetName: String(source.datasetName || '').trim(),
+      datasetPath: String(source.datasetPath || '').trim(),
+      csvName: String(source.csvName || '').trim(),
+    }))
+    .filter((source) => source.datasetName && source.datasetPath && source.csvName);
 }
 
 function getCollectionSession(projectRoot, datasetName, videoName) {
@@ -521,6 +560,130 @@ ipcMain.handle('list-datasets', async () => {
     } catch (error) {
         console.error("Error listing datasets:", error);
         return [];
+    }
+});
+
+ipcMain.handle('merge-datasets', async (event, payload = {}) => {
+    try {
+        const projectRoot = path.join(__dirname, '..');
+        const sources = normalizeMergedSources(payload.sources);
+        if (sources.length < 2) {
+            return { error: 'Choose at least two datasets to merge.' };
+        }
+
+        const outputDatasetName = sanitizeDatasetName(payload.outputDatasetName || `merged_${new Date().toISOString().split('T')[0]}`);
+        const outputDatasetPath = path.join(projectRoot, 'data_sets', outputDatasetName);
+        const outputImagesDir = path.join(outputDatasetPath, 'images');
+        const outputLabelsDir = path.join(outputDatasetPath, 'labels');
+        const outputCsvName = 'labels_merged.csv';
+        const outputCsvPath = path.join(outputDatasetPath, outputCsvName);
+
+        if (fs.existsSync(outputDatasetPath)) {
+            const existingEntries = fs.readdirSync(outputDatasetPath);
+            if (existingEntries.length > 0) {
+                return { error: `Output dataset already exists and is not empty: ${outputDatasetName}` };
+            }
+        }
+
+        fs.mkdirSync(outputImagesDir, { recursive: true });
+        fs.mkdirSync(outputLabelsDir, { recursive: true });
+
+        const mergedRows = [];
+        const usedOutputNames = new Set();
+        const mergeSummary = [];
+
+        for (const source of sources) {
+            const csvPath = path.join(source.datasetPath, source.csvName);
+            if (!fs.existsSync(csvPath)) {
+                return { error: `CSV not found for ${source.datasetName}: ${source.csvName}` };
+            }
+
+            const rows = readAnnotationRows(csvPath);
+            const rowsByFilename = new Map();
+            rows.forEach((row) => {
+                const filename = String(row.filename || '').trim();
+                if (!filename) return;
+                if (!rowsByFilename.has(filename)) {
+                    rowsByFilename.set(filename, []);
+                }
+                rowsByFilename.get(filename).push(row);
+            });
+
+            let copiedImages = 0;
+            let copiedAnnotations = 0;
+
+            for (const [filename, filenameRows] of rowsByFilename.entries()) {
+                const imagePath = findDatasetImagePath(source.datasetPath, filename);
+                if (!imagePath || !fs.existsSync(imagePath)) {
+                    continue;
+                }
+
+                const safeSourceName = sanitizeDatasetName(source.datasetName);
+                const outputFilename = ensureUniqueFilename(`${safeSourceName}_${path.basename(filename)}`, usedOutputNames);
+                const outputImagePath = path.join(outputImagesDir, outputFilename);
+                const outputLabelPath = path.join(outputLabelsDir, `${getImageBasename(outputFilename)}.txt`);
+                const sourceLabelPath = getDatasetLabelPath(source.datasetPath, filename);
+
+                fs.copyFileSync(imagePath, outputImagePath);
+
+                if (fs.existsSync(sourceLabelPath)) {
+                    fs.copyFileSync(sourceLabelPath, outputLabelPath);
+                } else {
+                    writeYoloLabelFile(outputLabelPath, rowsToBoxes(filenameRows));
+                }
+
+                filenameRows.forEach((row) => {
+                    const rewritten = cloneAnnotationRow(row);
+                    rewritten.filename = outputFilename;
+                    rewritten.video_id = `${safeSourceName}__${String(row.video_id || path.parse(filename).name)}`;
+                    mergedRows.push(rewritten);
+                    copiedAnnotations += 1;
+                });
+
+                copiedImages += 1;
+            }
+
+            mergeSummary.push({
+                datasetName: source.datasetName,
+                csvName: source.csvName,
+                images: copiedImages,
+                annotations: copiedAnnotations,
+            });
+        }
+
+        if (mergedRows.length === 0) {
+            return { error: 'No labeled images were merged. Check that the selected datasets contain images and CSV rows.' };
+        }
+
+        writeAnnotationRows(outputCsvPath, mergedRows);
+        fs.writeFileSync(
+            path.join(outputDatasetPath, 'merge_manifest.json'),
+            JSON.stringify({
+                outputDatasetName,
+                outputCsvName,
+                createdAt: new Date().toISOString(),
+                sources: mergeSummary,
+                totals: {
+                    images: mergeSummary.reduce((sum, item) => sum + item.images, 0),
+                    annotations: mergeSummary.reduce((sum, item) => sum + item.annotations, 0),
+                },
+            }, null, 2),
+            'utf-8'
+        );
+
+        return {
+            success: true,
+            datasetName: outputDatasetName,
+            datasetPath: outputDatasetPath,
+            csvName: outputCsvName,
+            summary: mergeSummary,
+            totals: {
+                images: mergeSummary.reduce((sum, item) => sum + item.images, 0),
+                annotations: mergeSummary.reduce((sum, item) => sum + item.annotations, 0),
+            },
+        };
+    } catch (error) {
+        return { error: error.message };
     }
 });
 
