@@ -3,6 +3,7 @@ import { X, Minus, Square, Copy, Target, Gamepad2, MonitorPlay, Database, BrainC
 import './index.css';
 import CollectorWorkspace from './CollectorWorkspace';
 import DatasetViewerWorkspace from './DatasetViewerWorkspace';
+import TrainingReviewPanel from './TrainingReviewPanel';
 import VideoTesterWorkspace from './VideoTesterWorkspace';
 
 const TitleBar = () => (
@@ -146,8 +147,11 @@ const Presentation = () => {
     const [trainEpochs, setTrainEpochs] = useState(10);
     const [trainBatchSize, setTrainBatchSize] = useState(16);
     const [trainImageSize, setTrainImageSize] = useState(640);
+    const [trainTestSplit, setTrainTestSplit] = useState(20);
     const [trainDeviceMode, setTrainDeviceMode] = useState('cuda');
     const [trainModel, setTrainModel] = useState('yolov8n');
+    const [trainingSummary, setTrainingSummary] = useState(null);
+    const [testReviewManifest, setTestReviewManifest] = useState(null);
     const [mergeSelections, setMergeSelections] = useState({});
     const [mergeOutputName, setMergeOutputName] = useState('');
 
@@ -465,6 +469,8 @@ const Presentation = () => {
     const handleTrainOnDataset = async () => {
         if (!selectedDataset || !selectedCsv) return;
         setIsRunning(true);
+        setTrainingSummary(null);
+        setTestReviewManifest(null);
         setLogs([
             `> Starting training on dataset: ${selectedDataset.name}`,
             `> CSV: ${selectedCsv}`,
@@ -472,6 +478,7 @@ const Presentation = () => {
             `> Epochs: ${trainEpochs}`,
             `> Batch Size: ${trainBatchSize}`,
             `> Image Size: ${trainImageSize}`,
+            `> Test Split: ${trainTestSplit}%`,
             `> Device Mode: ${trainDeviceMode === 'cuda' ? 'CUDA / NVIDIA GPU only' : trainDeviceMode === 'auto' ? 'Auto (prefer CUDA)' : 'CPU only'}`,
         ]);
         const result = await window.electronAPI.runTraining({
@@ -480,11 +487,22 @@ const Presentation = () => {
             epochs: trainEpochs,
             batchSize: trainBatchSize,
             imageSize: trainImageSize,
+            testSplit: trainTestSplit,
             deviceMode: trainDeviceMode,
             modelChoice: trainModel,
         });
         if (result.success) {
-            setLogs(prev => [...prev, `\n[Success] Training completed successfully with ${trainModel}.`]);
+            setTrainingSummary(result.summary || null);
+            setTestReviewManifest(result.reviewManifest || null);
+            const metrics = result.summary?.evaluation?.metrics || result.testMetrics?.aggregate_metrics || {};
+            setLogs(prev => [
+                ...prev,
+                `\n[Success] Training completed successfully with ${trainModel}.`,
+                `[Eval] Precision: ${typeof metrics.precision === 'number' ? `${(metrics.precision * 100).toFixed(1)}%` : 'n/a'}`,
+                `[Eval] Recall: ${typeof metrics.recall === 'number' ? `${(metrics.recall * 100).toFixed(1)}%` : 'n/a'}`,
+                `[Eval] mAP50: ${typeof metrics.map50 === 'number' ? `${(metrics.map50 * 100).toFixed(1)}%` : 'n/a'}`,
+                `[Eval] mAP50-95: ${typeof metrics.map50_95 === 'number' ? `${(metrics.map50_95 * 100).toFixed(1)}%` : 'n/a'}`,
+            ]);
         } else {
             setLogs(prev => [...prev, `\n[Error] ${result.error}`]);
         }
@@ -996,7 +1014,7 @@ const Presentation = () => {
                                 </div>
                             </div>
                             
-                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-5 gap-6">
                                 <div className="flex flex-col gap-1.5">
                                     <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Model Basis</label>
                                     <select
@@ -1045,6 +1063,20 @@ const Presentation = () => {
                                         className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
                                     />
                                 </div>
+                                <div className="flex flex-col gap-1.5 flex-1">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Test Split %</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="90"
+                                        value={trainTestSplit}
+                                        onChange={(e) => setTrainTestSplit(Math.max(1, Math.min(90, parseInt(e.target.value || '20', 10) || 20)))}
+                                        className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
+                                    />
+                                    <p className="text-xs text-slate-500 leading-relaxed">
+                                        This is the held-out split used for training-time validation and the final review images shown below.
+                                    </p>
+                                </div>
                             </div>
 
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1082,6 +1114,11 @@ const Presentation = () => {
                             disabled={isRunning || !selectedDataset}
                             className="px-6 py-3 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-rose-900/20 text-sm font-bold w-full flex justify-center items-center gap-2"
                         >Start Training <BrainCircuit size={18}/></button>
+
+                        <TrainingReviewPanel
+                            summary={trainingSummary}
+                            reviewManifest={testReviewManifest}
+                        />
                     </div>
                     {renderTerminal()}
                 </div>

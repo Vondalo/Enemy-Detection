@@ -117,6 +117,73 @@ function writeAnnotationRows(csvPath, rows) {
   fs.writeFileSync(csvPath, `${lines.join('\n')}\n`, 'utf-8');
 }
 
+function resolveProjectPath(projectRoot, candidatePath) {
+  if (!candidatePath) return null;
+  return path.isAbsolute(candidatePath) ? candidatePath : path.join(projectRoot, candidatePath);
+}
+
+function readJsonFileSafe(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+function resolveTrainingSummaryPaths(projectRoot, summary) {
+  if (!summary || typeof summary !== 'object') return summary;
+
+  const nextSummary = JSON.parse(JSON.stringify(summary));
+  if (nextSummary.best_weights) {
+    nextSummary.best_weights = resolveProjectPath(projectRoot, nextSummary.best_weights);
+  }
+  if (nextSummary.stable_best_model) {
+    nextSummary.stable_best_model = resolveProjectPath(projectRoot, nextSummary.stable_best_model);
+  }
+  if (nextSummary.dataset?.data_yaml) {
+    nextSummary.dataset.data_yaml = resolveProjectPath(projectRoot, nextSummary.dataset.data_yaml);
+  }
+  if (nextSummary.dataset?.test_images_dir) {
+    nextSummary.dataset.test_images_dir = resolveProjectPath(projectRoot, nextSummary.dataset.test_images_dir);
+  }
+  if (nextSummary.dataset?.test_labels_csv) {
+    nextSummary.dataset.test_labels_csv = resolveProjectPath(projectRoot, nextSummary.dataset.test_labels_csv);
+  }
+  if (nextSummary.evaluation?.metrics_path) {
+    nextSummary.evaluation.metrics_path = resolveProjectPath(projectRoot, nextSummary.evaluation.metrics_path);
+  }
+  if (nextSummary.evaluation?.review_manifest_path) {
+    nextSummary.evaluation.review_manifest_path = resolveProjectPath(projectRoot, nextSummary.evaluation.review_manifest_path);
+  }
+  if (nextSummary.evaluation?.review_csv_path) {
+    nextSummary.evaluation.review_csv_path = resolveProjectPath(projectRoot, nextSummary.evaluation.review_csv_path);
+  }
+  if (nextSummary.evaluation?.review_images_dir) {
+    nextSummary.evaluation.review_images_dir = resolveProjectPath(projectRoot, nextSummary.evaluation.review_images_dir);
+  }
+  return nextSummary;
+}
+
+function loadTrainingArtifacts(projectRoot, outputDir = 'models') {
+  const summaryPath = path.join(projectRoot, outputDir, 'training_summary.json');
+  const summary = readJsonFileSafe(summaryPath);
+  if (!summary) {
+    return { error: `Training completed but no summary was found at ${summaryPath}.` };
+  }
+
+  const resolvedSummary = resolveTrainingSummaryPaths(projectRoot, summary);
+  const reviewManifestPath = resolvedSummary?.evaluation?.review_manifest_path || null;
+  const metricsPath = resolvedSummary?.evaluation?.metrics_path || null;
+
+  return {
+    summary: resolvedSummary,
+    summaryPath,
+    reviewManifest: readJsonFileSafe(reviewManifestPath),
+    testMetrics: readJsonFileSafe(metricsPath),
+  };
+}
+
 function getDatasetImagesDir(datasetPath) {
   return path.join(datasetPath, 'images');
 }
@@ -1052,15 +1119,17 @@ ipcMain.handle('run-training', async (event, payload = {}) => {
             imageSize = 640,
             deviceMode = 'cuda',
             modelChoice = 'yolov8n',
+            testSplit = 20,
         } = payload;
 
         if (!datasetPath || !csvName) {
             resolve({ error: 'Training requires both a dataset path and CSV name.' });
             return;
         }
-        
+
         const csvPath = path.join(datasetPath, csvName);
         const imgDir = path.join(datasetPath, 'images');
+        const normalizedTestSplit = Math.max(1, Math.min(90, Number(testSplit) || 20)) / 100;
 
         const trainArgs = [
             trainScript, 
@@ -1070,7 +1139,8 @@ ipcMain.handle('run-training', async (event, payload = {}) => {
             '--batch_size', batchSize.toString(),
             '--imgsz', imageSize.toString(),
             '--device_mode', deviceMode,
-            '--model', modelChoice
+            '--model', modelChoice,
+            '--test_split', normalizedTestSplit.toString(),
         ];
 
         const trainProcess = spawn(pythonExe, trainArgs, {
@@ -1087,8 +1157,24 @@ ipcMain.handle('run-training', async (event, payload = {}) => {
         });
 
         trainProcess.on('close', (code) => {
-            if (code === 0) resolve({ success: true });
-            else resolve({ error: `Training failed with code ${code}` });
+            if (code !== 0) {
+                resolve({ error: `Training failed with code ${code}` });
+                return;
+            }
+
+            const artifacts = loadTrainingArtifacts(projectRoot);
+            if (artifacts.error) {
+                resolve({ error: artifacts.error });
+                return;
+            }
+
+            resolve({
+                success: true,
+                summary: artifacts.summary,
+                summaryPath: artifacts.summaryPath,
+                reviewManifest: artifacts.reviewManifest,
+                testMetrics: artifacts.testMetrics,
+            });
         });
     });
 });
