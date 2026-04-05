@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   analyzeDatasetBias: (datasetPath, csvName) => ipcRenderer.invoke('analyze-dataset-bias', datasetPath, csvName),
   runBiasFix: (datasetPath, csvName) => ipcRenderer.invoke('run-bias-fix', datasetPath, csvName),
   runTraining: (payload) => ipcRenderer.invoke('run-training', payload),
+  listTrainingRuns: () => ipcRenderer.invoke('list-training-runs'),
+  loadTrainingRun: (summaryPath) => ipcRenderer.invoke('load-training-run', summaryPath),
   listVideos: () => ipcRenderer.invoke('list-videos'),
   runDataCollection: (videoName, datasetName) => ipcRenderer.invoke('run-data-collection', videoName, datasetName),
   startManualCollection: (videoName, datasetName) => ipcRenderer.invoke('start-manual-collection', videoName, datasetName),

@@ -58,6 +58,23 @@ const DETECTOR_CHOICES = [
     },
 ];
 
+const formatPercent = (value) => (
+    typeof value === 'number' && !Number.isNaN(value) ? `${(value * 100).toFixed(1)}%` : 'n/a'
+);
+
+const formatTrainingTimestamp = (value) => {
+    if (!value) return 'Unknown date';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return 'Unknown date';
+    return parsed.toLocaleString();
+};
+
+const getDetectorChoiceLabel = (modelChoice, fallbackLabel = 'Custom model') => (
+    DETECTOR_CHOICES.find((choice) => choice.key === modelChoice)?.label
+    || modelChoice
+    || fallbackLabel
+);
+
 const getDetectionChrome = (className) => {
     const normalized = String(className || '').toLowerCase();
     if (normalized === 'player') {
@@ -148,8 +165,12 @@ const Presentation = () => {
     const [trainBatchSize, setTrainBatchSize] = useState(16);
     const [trainImageSize, setTrainImageSize] = useState(640);
     const [trainTestSplit, setTrainTestSplit] = useState(20);
+    const [trainConfidenceThreshold, setTrainConfidenceThreshold] = useState(25);
     const [trainDeviceMode, setTrainDeviceMode] = useState('cuda');
     const [trainModel, setTrainModel] = useState('yolov8n');
+    const [trainedModels, setTrainedModels] = useState([]);
+    const [selectedTrainingSummaryPath, setSelectedTrainingSummaryPath] = useState('');
+    const [isLoadingTrainingRun, setIsLoadingTrainingRun] = useState(false);
     const [trainingSummary, setTrainingSummary] = useState(null);
     const [testReviewManifest, setTestReviewManifest] = useState(null);
     const [mergeSelections, setMergeSelections] = useState({});
@@ -176,6 +197,62 @@ const Presentation = () => {
             csvName: mergeSelections[dataset.name]?.csvName || dataset.csvs?.[0] || '',
         }))
         .filter((dataset) => dataset.csvName);
+
+    const handleLoadTrainingRun = async (summaryPath, options = {}) => {
+        if (!summaryPath) return false;
+
+        const { appendSelectionLog = true } = options;
+        setIsLoadingTrainingRun(true);
+        try {
+            const result = await window.electronAPI.loadTrainingRun(summaryPath);
+            if (!result.success) {
+                if (appendSelectionLog) {
+                    appendLog(`[Error] ${result.error}`);
+                }
+                return false;
+            }
+
+            setSelectedTrainingSummaryPath(result.summaryPath || summaryPath);
+            setTrainingSummary(result.summary || null);
+            setTestReviewManifest(result.reviewManifest || null);
+
+            if (appendSelectionLog) {
+                const runLabel = result.savedRun?.datasetName || result.summary?.training_source?.dataset_name || 'saved model';
+                appendLog(`[Model] Loaded ${runLabel} trained on ${formatTrainingTimestamp(result.savedRun?.createdAt || result.summary?.created_at)}.`);
+            }
+            return true;
+        } finally {
+            setIsLoadingTrainingRun(false);
+        }
+    };
+
+    const handleFetchTrainingRuns = async (preferredSummaryPath = null, options = {}) => {
+        const { autoLoad = true, appendSelectionLog = false } = options;
+        const result = await window.electronAPI.listTrainingRuns();
+        const runs = Array.isArray(result) ? result : [];
+        setTrainedModels(runs);
+
+        if (!runs.length) {
+            setSelectedTrainingSummaryPath('');
+            setTrainingSummary(null);
+            setTestReviewManifest(null);
+            return;
+        }
+
+        if (!autoLoad) return;
+
+        const preferredRun = preferredSummaryPath
+            ? runs.find((run) => run.summaryPath === preferredSummaryPath)
+            : null;
+        const existingRun = selectedTrainingSummaryPath
+            ? runs.find((run) => run.summaryPath === selectedTrainingSummaryPath)
+            : null;
+        const runToLoad = preferredRun || existingRun || runs[0];
+
+        if (!runToLoad) return;
+        if (runToLoad.summaryPath === selectedTrainingSummaryPath && trainingSummary) return;
+        await handleLoadTrainingRun(runToLoad.summaryPath, { appendSelectionLog });
+    };
 
     const handleFetchDatasets = async () => {
         const data = await window.electronAPI.listDatasets();
@@ -214,6 +291,7 @@ const Presentation = () => {
         }
         handleFetchDatasets();
         handleFetchVideos();
+        handleFetchTrainingRuns();
         return () => {
             if (window.electronAPI?.removePipelineOutputListener) {
                 window.electronAPI.removePipelineOutputListener();
@@ -479,6 +557,7 @@ const Presentation = () => {
             `> Batch Size: ${trainBatchSize}`,
             `> Image Size: ${trainImageSize}`,
             `> Test Split: ${trainTestSplit}%`,
+            `> Review Confidence Threshold: ${trainConfidenceThreshold}%`,
             `> Device Mode: ${trainDeviceMode === 'cuda' ? 'CUDA / NVIDIA GPU only' : trainDeviceMode === 'auto' ? 'Auto (prefer CUDA)' : 'CPU only'}`,
         ]);
         const result = await window.electronAPI.runTraining({
@@ -488,20 +567,26 @@ const Presentation = () => {
             batchSize: trainBatchSize,
             imageSize: trainImageSize,
             testSplit: trainTestSplit,
+            confidenceThreshold: trainConfidenceThreshold,
             deviceMode: trainDeviceMode,
             modelChoice: trainModel,
         });
         if (result.success) {
+            const savedSummaryPath = result.savedRun?.summaryPath || result.summaryPath || '';
+            setSelectedTrainingSummaryPath(savedSummaryPath);
             setTrainingSummary(result.summary || null);
             setTestReviewManifest(result.reviewManifest || null);
+            await handleFetchTrainingRuns(savedSummaryPath, { autoLoad: false });
             const metrics = result.summary?.evaluation?.metrics || result.testMetrics?.aggregate_metrics || {};
             setLogs(prev => [
                 ...prev,
                 `\n[Success] Training completed successfully with ${trainModel}.`,
-                `[Eval] Precision: ${typeof metrics.precision === 'number' ? `${(metrics.precision * 100).toFixed(1)}%` : 'n/a'}`,
-                `[Eval] Recall: ${typeof metrics.recall === 'number' ? `${(metrics.recall * 100).toFixed(1)}%` : 'n/a'}`,
-                `[Eval] mAP50: ${typeof metrics.map50 === 'number' ? `${(metrics.map50 * 100).toFixed(1)}%` : 'n/a'}`,
-                `[Eval] mAP50-95: ${typeof metrics.map50_95 === 'number' ? `${(metrics.map50_95 * 100).toFixed(1)}%` : 'n/a'}`,
+                `[Eval] Precision: ${formatPercent(metrics.precision)}`,
+                `[Eval] Recall: ${formatPercent(metrics.recall)}`,
+                `[Eval] mAP50: ${formatPercent(metrics.map50)}`,
+                `[Eval] mAP50-95: ${formatPercent(metrics.map50_95)}`,
+                `[Model] Saved snapshot: ${savedSummaryPath || 'latest model history entry'}`,
+                ...(result.historyWarning ? [`[Warning] ${result.historyWarning}`] : []),
             ]);
         } else {
             setLogs(prev => [...prev, `\n[Error] ${result.error}`]);
@@ -1014,7 +1099,7 @@ const Presentation = () => {
                                 </div>
                             </div>
                             
-                            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-5 gap-6">
+                            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-6 gap-6">
                                 <div className="flex flex-col gap-1.5">
                                     <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Model Basis</label>
                                     <select
@@ -1077,6 +1162,20 @@ const Presentation = () => {
                                         This is the held-out split used for training-time validation and the final review images shown below.
                                     </p>
                                 </div>
+                                <div className="flex flex-col gap-1.5 flex-1">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Review Conf %</label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        max="100"
+                                        value={trainConfidenceThreshold}
+                                        onChange={(e) => setTrainConfidenceThreshold(Math.max(0, Math.min(100, parseInt(e.target.value || '25', 10) || 25)))}
+                                        className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:outline-none focus:border-rose-500"
+                                    />
+                                    <p className="text-xs text-slate-500 leading-relaxed">
+                                        Used for the saved hold-out review images and per-image review counts. Core validation mAP metrics are still computed by Ultralytics.
+                                    </p>
+                                </div>
                             </div>
 
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1105,8 +1204,8 @@ const Presentation = () => {
                         </div>
 
                         <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 leading-relaxed">
-                            Training now uses the selected detector basis directly from the app, passes your batch size and image size through to Python, and lets the trainer create its own train/validation split from the chosen CSV.
-                            That avoids leaking the same cleaned images into both train and validation, while making CUDA usage explicit instead of hidden.
+                            Training now uses the selected detector basis directly from the app, passes your batch size, image size, and saved-review confidence threshold through to Python, and lets the trainer create its own train/validation split from the chosen CSV.
+                            Every successful run is archived into model history so you can reopen earlier checkpoints, browse their saved hold-out reviews, and compare stats without retraining.
                         </div>
 
                         <button 
@@ -1114,6 +1213,87 @@ const Presentation = () => {
                             disabled={isRunning || !selectedDataset}
                             className="px-6 py-3 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-rose-900/20 text-sm font-bold w-full flex justify-center items-center gap-2"
                         >Start Training <BrainCircuit size={18}/></button>
+
+                        <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5">
+                            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+                                <div className="flex items-center gap-2 text-slate-200">
+                                    <Layers size={16} className="text-rose-400" />
+                                    <span className="text-xs font-black uppercase tracking-[0.24em]">Saved Models</span>
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                    {trainedModels.length} saved run{trainedModels.length === 1 ? '' : 's'}
+                                </div>
+                            </div>
+
+                            {!trainedModels.length ? (
+                                <div className="rounded-xl border border-dashed border-slate-700 bg-slate-950/60 p-5 text-sm text-slate-400">
+                                    Your trained-model history will appear here after the first successful run.
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3">
+                                    {trainedModels.map((run) => {
+                                        const isSelected = run.summaryPath === selectedTrainingSummaryPath;
+                                        return (
+                                            <button
+                                                key={run.id}
+                                                onClick={() => handleLoadTrainingRun(run.summaryPath)}
+                                                disabled={isLoadingTrainingRun}
+                                                className={`text-left rounded-2xl border p-4 transition ${
+                                                    isSelected
+                                                        ? 'border-rose-500/40 bg-rose-500/10'
+                                                        : 'border-slate-800 bg-slate-950/70 hover:bg-slate-900'
+                                                } ${isLoadingTrainingRun ? 'opacity-70' : ''}`}
+                                            >
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <div className="truncate text-sm font-bold text-white">{run.datasetName || 'Unnamed dataset'}</div>
+                                                        <div className="mt-1 text-xs text-slate-500 truncate">
+                                                            {run.csvName || 'No CSV recorded'}
+                                                        </div>
+                                                    </div>
+                                                    <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em] ${
+                                                        run.source === 'current'
+                                                            ? 'border-amber-400/30 bg-amber-500/10 text-amber-100'
+                                                            : 'border-slate-700 bg-slate-900 text-slate-300'
+                                                    }`}>
+                                                        {run.source}
+                                                    </span>
+                                                </div>
+
+                                                <div className="mt-3 text-sm text-slate-200 font-semibold">
+                                                    {getDetectorChoiceLabel(run.modelChoice, run.modelLabel)}
+                                                </div>
+
+                                                <div className="grid grid-cols-2 gap-2 mt-3 text-xs">
+                                                    <div className="rounded-lg border border-slate-800 bg-black/30 p-2">
+                                                        <div className="text-slate-500 uppercase tracking-widest">mAP50</div>
+                                                        <div className="mt-1 text-white font-bold">{formatPercent(run.metrics?.map50)}</div>
+                                                    </div>
+                                                    <div className="rounded-lg border border-slate-800 bg-black/30 p-2">
+                                                        <div className="text-slate-500 uppercase tracking-widest">mAP50-95</div>
+                                                        <div className="mt-1 text-white font-bold">{formatPercent(run.metrics?.map50_95)}</div>
+                                                    </div>
+                                                    <div className="rounded-lg border border-slate-800 bg-black/30 p-2">
+                                                        <div className="text-slate-500 uppercase tracking-widest">Epochs</div>
+                                                        <div className="mt-1 text-white font-bold">{run.epochs ?? 'n/a'}</div>
+                                                    </div>
+                                                    <div className="rounded-lg border border-slate-800 bg-black/30 p-2">
+                                                        <div className="text-slate-500 uppercase tracking-widest">Review Conf</div>
+                                                        <div className="mt-1 text-white font-bold">
+                                                            {typeof run.reviewConfidenceThreshold === 'number' ? `${Math.round(run.reviewConfidenceThreshold * 100)}%` : 'n/a'}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div className="mt-3 text-[11px] text-slate-500 leading-relaxed">
+                                                    Trained {formatTrainingTimestamp(run.createdAt)}
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
 
                         <TrainingReviewPanel
                             summary={trainingSummary}

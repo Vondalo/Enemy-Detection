@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
@@ -29,7 +30,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 REVIEW_IOU_THRESHOLD = 0.5
-REVIEW_CONFIDENCE_THRESHOLD = 0.25
+DEFAULT_REVIEW_CONFIDENCE_THRESHOLD = 0.25
 REVIEW_MAX_DETECTIONS = 100
 
 
@@ -115,6 +116,12 @@ def _to_jsonable(value):
 def _clamp_ratio(value: float, name: str) -> float:
     if value <= 0 or value >= 1:
         raise ValueError(f"{name} must be between 0 and 1 (exclusive), received {value}.")
+    return value
+
+
+def _clamp_unit_interval(value: float, name: str) -> float:
+    if value < 0 or value > 1:
+        raise ValueError(f"{name} must be between 0 and 1 (inclusive), received {value}.")
     return value
 
 
@@ -352,6 +359,28 @@ def _resolve_holdout_dataset(dataset_stats: dict) -> tuple[Path | None, Path | N
     return Path(images_dir), Path(labels_csv)
 
 
+def _build_training_source_summary(args) -> dict:
+    dataset_dir = Path(args.dataset_dir).resolve() if args.dataset_dir else None
+    train_csv = Path(args.train_csv or args.csv).resolve() if (args.train_csv or args.csv) else None
+    train_dir = Path(args.train_dir or args.img_dir).resolve() if (args.train_dir or args.img_dir) else None
+
+    dataset_name = None
+    csv_name = None
+    if dataset_dir is not None:
+        dataset_name = dataset_dir.name
+    elif train_csv is not None:
+        dataset_name = train_csv.parent.name
+        csv_name = train_csv.name
+
+    return {
+        "dataset_name": dataset_name,
+        "dataset_dir": str(dataset_dir) if dataset_dir is not None else None,
+        "train_csv": str(train_csv) if train_csv is not None else None,
+        "train_dir": str(train_dir) if train_dir is not None else None,
+        "csv_name": csv_name,
+    }
+
+
 def _evaluate_holdout_split(
     model_path: Path,
     data_yaml: Path,
@@ -361,6 +390,7 @@ def _evaluate_holdout_split(
     batch_size: int,
     workers: int,
     device: str,
+    review_confidence_threshold: float,
 ) -> dict:
     detector = YOLO(str(model_path))
     val_results = detector.val(
@@ -422,7 +452,7 @@ def _evaluate_holdout_split(
 
         result = detector.predict(
             source=str(image_path),
-            conf=REVIEW_CONFIDENCE_THRESHOLD,
+            conf=review_confidence_threshold,
             max_det=REVIEW_MAX_DETECTIONS,
             imgsz=imgsz,
             device=device,
@@ -512,7 +542,7 @@ def _evaluate_holdout_split(
             "aggregate_metrics": aggregate_metrics,
             "review_summary": review_summary,
             "iou_match_threshold": REVIEW_IOU_THRESHOLD,
-            "confidence_threshold": REVIEW_CONFIDENCE_THRESHOLD,
+            "confidence_threshold": review_confidence_threshold,
         }
     )
     manifest_payload = _to_jsonable(
@@ -521,7 +551,7 @@ def _evaluate_holdout_split(
             "summary": review_summary,
             "aggregate_metrics": aggregate_metrics,
             "iou_match_threshold": REVIEW_IOU_THRESHOLD,
-            "confidence_threshold": REVIEW_CONFIDENCE_THRESHOLD,
+            "confidence_threshold": review_confidence_threshold,
         }
     )
     metrics_path.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
@@ -535,7 +565,7 @@ def _evaluate_holdout_split(
         "review_available": True,
         "review_summary": review_summary,
         "iou_match_threshold": REVIEW_IOU_THRESHOLD,
-        "confidence_threshold": REVIEW_CONFIDENCE_THRESHOLD,
+        "confidence_threshold": review_confidence_threshold,
         "metrics_path": str(metrics_path),
         "review_manifest_path": str(manifest_path),
         "review_csv_path": str(review_csv_path),
@@ -757,6 +787,8 @@ def main():
                         help="Rebuild the prepared YOLO dataset cache before training")
     parser.add_argument("--print_model_choices", action="store_true",
                         help="Print supported detector choices and exit")
+    parser.add_argument("--review_confidence_threshold", type=float, default=DEFAULT_REVIEW_CONFIDENCE_THRESHOLD,
+                        help="Confidence threshold used for saved holdout review images and per-image review stats")
     args = parser.parse_args()
 
     if args.print_model_choices:
@@ -771,11 +803,20 @@ def main():
     runtime_flags = _configure_cuda_runtime(use_cuda)
     workers = _resolve_worker_count(args.workers, use_cuda)
     data_yaml, dataset_stats = _prepare_dataset(args)
+    review_confidence_threshold = _clamp_unit_interval(
+        args.review_confidence_threshold,
+        "--review_confidence_threshold",
+    )
+    now_utc = datetime.now(timezone.utc)
+    created_at = now_utc.isoformat()
+    run_id = f"{now_utc.strftime('%Y%m%dT%H%M%S')}_{Path(str(args.model)).stem}_{os.getpid()}"
+    training_source = _build_training_source_summary(args)
 
     print(f"[Config] Device: {device}")
     print(f"[Config] Model:  {model_source}")
     print(f"[Config] Data:   {data_yaml}")
     print(f"[Config] Epochs: {args.epochs} | Batch: {args.batch_size} | ImgSz: {args.imgsz}")
+    print(f"[Config] Review confidence threshold: {review_confidence_threshold:.2f}")
     _print_runtime_summary(requested_device_mode, device, use_cuda, runtime_flags, workers)
 
     detector = YOLO(model_source)
@@ -810,12 +851,17 @@ def main():
         batch_size=args.batch_size,
         workers=workers,
         device=device,
+        review_confidence_threshold=review_confidence_threshold,
     )
 
     summary = {
+        "run_id": run_id,
+        "created_at": created_at,
+        "model_choice": args.model,
         "chosen_model": model_source,
         "best_weights": str(best_weights),
         "stable_best_model": str(stable_best),
+        "training_source": training_source,
         "dataset": dataset_stats,
         "epochs": args.epochs,
         "batch_size": args.batch_size,
