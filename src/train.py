@@ -667,6 +667,34 @@ def _find_best_weights(runs_dir: Path) -> Path | None:
     return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
+def _resolve_best_weights(output_dir: Path, runs_dir: Path, detector: YOLO) -> Path | None:
+    search_roots: list[Path] = []
+
+    trainer = getattr(detector, "trainer", None)
+    trainer_save_dir = getattr(trainer, "save_dir", None)
+    if trainer_save_dir:
+        search_roots.append(Path(trainer_save_dir))
+
+    search_roots.extend([
+        runs_dir,
+        output_dir,
+        PROJECT_ROOT / "runs",
+    ])
+
+    seen = set()
+    for root in search_roots:
+        resolved = Path(root)
+        key = str(resolved.resolve()) if resolved.exists() else str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        best = _find_best_weights(resolved)
+        if best is not None:
+            return best
+
+    return None
+
+
 def _resolve_training_device(requested_mode: str | None, explicit_device: str | None) -> tuple[str, str, bool]:
     if explicit_device:
         actual_device = explicit_device
@@ -836,9 +864,12 @@ def main():
         verbose=True,
     )
 
-    best_weights = _find_best_weights(runs_dir)
+    best_weights = _resolve_best_weights(output_dir, runs_dir, detector)
     if best_weights is None:
-        raise RuntimeError(f"Training completed but no best.pt was found under {runs_dir}")
+        raise RuntimeError(
+            "Training completed but no best.pt was found under the expected run directories. "
+            f"Checked {runs_dir}, {output_dir}, and {PROJECT_ROOT / 'runs'}."
+        )
 
     stable_best = output_dir / "best_model.pt"
     shutil.copy2(best_weights, stable_best)
