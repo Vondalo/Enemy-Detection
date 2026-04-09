@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   runTraining: (payload) => ipcRenderer.invoke('run-training', payload),
   listTrainingRuns: () => ipcRenderer.invoke('list-training-runs'),
   loadTrainingRun: (summaryPath) => ipcRenderer.invoke('load-training-run', summaryPath),
+  activateTrainingRun: (summaryPath) => ipcRenderer.invoke('activate-training-run', summaryPath),
   listVideos: () => ipcRenderer.invoke('list-videos'),
   runDataCollection: (videoName, datasetName) => ipcRenderer.invoke('run-data-collection', videoName, datasetName),
   startManualCollection: (videoName, datasetName) => ipcRenderer.invoke('start-manual-collection', videoName, datasetName),

@@ -15,6 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from ultralytics import YOLO
+from src.model import resolve_inference_model_source
 
 
 def _box_confidence(box) -> float:
@@ -53,8 +54,8 @@ def _normalize_class_name(raw_name: str | int) -> tuple[str, str]:
 def main():
     parser = argparse.ArgumentParser(description="Run object detection on a single image.")
     parser.add_argument("image_path", help="Path to the input image.")
-    parser.add_argument("--model", default=str(PROJECT_ROOT / "models" / "best_model.pt"),
-                        help="Path to trained detector weights.")
+    parser.add_argument("--model", default=None,
+                        help="Path to trained detector weights. Defaults to the active model, then models/best_model.pt.")
     parser.add_argument("--save_path", default=None,
                         help="Optional path to save the rendered detection image.")
     parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold.")
@@ -62,7 +63,7 @@ def main():
     args = parser.parse_args()
 
     image_path = Path(args.image_path)
-    model_path = Path(args.model)
+    model_path = Path(resolve_inference_model_source(args.model, PROJECT_ROOT))
 
     if not image_path.exists():
         print(json.dumps({"error": f"Image not found: {image_path}"}))

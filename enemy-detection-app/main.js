@@ -18,6 +18,8 @@ const collectionSessions = new Map();
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.bmp', '.webp']);
 const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'webm', 'mkv'];
 const MODEL_HISTORY_DIRNAME = 'history';
+const ACTIVE_MODEL_FILENAME = 'active_model.json';
+const IMAGE_ARTIFACT_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.bmp', '.webp']);
 const ANNOTATION_HEADERS = [
   'filename', 'class_id', 'class_name', 'has_enemy', 'x_center',
   'y_center', 'width', 'height', 'video_id', 'frame_idx',
@@ -131,6 +133,15 @@ function getModelHistoryRoot(projectRoot) {
   return path.join(getModelsRoot(projectRoot), MODEL_HISTORY_DIRNAME);
 }
 
+function getActiveModelConfigPath(projectRoot) {
+  return path.join(getModelsRoot(projectRoot), ACTIVE_MODEL_FILENAME);
+}
+
+function relativeProjectPath(projectRoot, targetPath) {
+  if (!targetPath) return null;
+  return path.relative(path.resolve(projectRoot), path.resolve(targetPath));
+}
+
 function resolveSummaryArtifactPath(projectRoot, summaryDir, candidatePath) {
   if (!candidatePath) return null;
   if (path.isAbsolute(candidatePath)) return candidatePath;
@@ -154,6 +165,26 @@ function readJsonFileSafe(filePath) {
   }
 }
 
+function readCsvFileSafe(csvPath) {
+  if (!csvPath || !fs.existsSync(csvPath)) return [];
+
+  const raw = fs.readFileSync(csvPath, 'utf-8').replace(/^\uFEFF/, '').trim();
+  if (!raw) return [];
+
+  const lines = raw.split(/\r?\n/).filter(Boolean);
+  if (lines.length === 0) return [];
+
+  const headers = parseCsvLine(lines[0]);
+  return lines.slice(1).map((line) => {
+    const values = parseCsvLine(line);
+    const row = {};
+    headers.forEach((header, index) => {
+      row[header] = values[index] ?? '';
+    });
+    return row;
+  });
+}
+
 function resolveTrainingSummaryPaths(projectRoot, summaryPath, summary) {
   if (!summary || typeof summary !== 'object') return summary;
 
@@ -164,6 +195,12 @@ function resolveTrainingSummaryPaths(projectRoot, summaryPath, summary) {
   }
   if (nextSummary.stable_best_model) {
     nextSummary.stable_best_model = resolveSummaryArtifactPath(projectRoot, summaryDir, nextSummary.stable_best_model);
+  }
+  if (nextSummary.ultralytics_run_dir) {
+    nextSummary.ultralytics_run_dir = resolveSummaryArtifactPath(projectRoot, summaryDir, nextSummary.ultralytics_run_dir);
+  }
+  if (nextSummary.artifact_manifest_path) {
+    nextSummary.artifact_manifest_path = resolveSummaryArtifactPath(projectRoot, summaryDir, nextSummary.artifact_manifest_path);
   }
   if (nextSummary.dataset?.data_yaml) {
     nextSummary.dataset.data_yaml = resolveSummaryArtifactPath(projectRoot, summaryDir, nextSummary.dataset.data_yaml);
@@ -189,6 +226,39 @@ function resolveTrainingSummaryPaths(projectRoot, summaryPath, summary) {
   return nextSummary;
 }
 
+function resolveArtifactManifestPaths(projectRoot, summaryPath, artifactManifest) {
+  if (!artifactManifest || typeof artifactManifest !== 'object') return artifactManifest;
+
+  const summaryDir = summaryPath ? path.dirname(summaryPath) : projectRoot;
+  const nextManifest = JSON.parse(JSON.stringify(artifactManifest));
+  if (nextManifest.ultralytics_run_dir) {
+    nextManifest.ultralytics_run_dir = resolveSummaryArtifactPath(projectRoot, summaryDir, nextManifest.ultralytics_run_dir);
+  }
+
+  ['images', 'tables', 'weights'].forEach((collectionKey) => {
+    if (!Array.isArray(nextManifest[collectionKey])) return;
+    nextManifest[collectionKey] = nextManifest[collectionKey].map((item) => ({
+      ...item,
+      path: resolveSummaryArtifactPath(projectRoot, summaryDir, item.path),
+    }));
+  });
+
+  if (nextManifest.evaluation?.metrics_path) {
+    nextManifest.evaluation.metrics_path = resolveSummaryArtifactPath(projectRoot, summaryDir, nextManifest.evaluation.metrics_path);
+  }
+  if (nextManifest.evaluation?.review_manifest_path) {
+    nextManifest.evaluation.review_manifest_path = resolveSummaryArtifactPath(projectRoot, summaryDir, nextManifest.evaluation.review_manifest_path);
+  }
+  if (nextManifest.evaluation?.review_csv_path) {
+    nextManifest.evaluation.review_csv_path = resolveSummaryArtifactPath(projectRoot, summaryDir, nextManifest.evaluation.review_csv_path);
+  }
+  if (nextManifest.evaluation?.review_images_dir) {
+    nextManifest.evaluation.review_images_dir = resolveSummaryArtifactPath(projectRoot, summaryDir, nextManifest.evaluation.review_images_dir);
+  }
+
+  return nextManifest;
+}
+
 function resolveReviewManifestPaths(projectRoot, summaryPath, reviewManifest) {
   if (!reviewManifest || typeof reviewManifest !== 'object') return reviewManifest;
 
@@ -206,6 +276,240 @@ function resolveReviewManifestPaths(projectRoot, summaryPath, reviewManifest) {
   return nextManifest;
 }
 
+function createArtifactKey(relativePath) {
+  return String(relativePath || '')
+    .replace(/[\\/]/g, '_')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase();
+}
+
+function humanizeArtifactName(relativePath) {
+  const baseName = path.basename(relativePath, path.extname(relativePath));
+  const withSpaces = baseName
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\bpr\b/gi, 'PR')
+    .replace(/\bf1\b/gi, 'F1');
+
+  return withSpaces.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function classifyImageArtifact(relativePath) {
+  const normalized = String(relativePath || '').replace(/\\/g, '/').toLowerCase();
+  if (normalized.includes('curve') || normalized.includes('confusion_matrix') || normalized === 'results.png') {
+    return 'plot';
+  }
+  if (normalized.includes('batch') || normalized === 'labels.jpg') {
+    return 'preview';
+  }
+  return 'image';
+}
+
+function listFilesRecursive(rootDir) {
+  if (!rootDir || !fs.existsSync(rootDir)) return [];
+
+  const results = [];
+  const stack = [rootDir];
+  while (stack.length > 0) {
+    const currentDir = stack.pop();
+    fs.readdirSync(currentDir, { withFileTypes: true }).forEach((entry) => {
+      const entryPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(entryPath);
+      } else {
+        results.push(entryPath);
+      }
+    });
+  }
+
+  return results.sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function resolveUltralyticsRunDir(projectRoot, summaryPath, summary) {
+  if (summary?.ultralytics_run_dir && fs.existsSync(summary.ultralytics_run_dir)) {
+    return summary.ultralytics_run_dir;
+  }
+
+  const summaryDir = summaryPath ? path.dirname(summaryPath) : projectRoot;
+  const archiveRunDir = path.join(summaryDir, 'ultralytics_run');
+  if (fs.existsSync(archiveRunDir)) {
+    return archiveRunDir;
+  }
+
+  if (summary?.best_weights && fs.existsSync(summary.best_weights)) {
+    const weightsDir = path.dirname(summary.best_weights);
+    if (path.basename(weightsDir).toLowerCase() === 'weights') {
+      const runDir = path.dirname(weightsDir);
+      if (fs.existsSync(runDir)) {
+        return runDir;
+      }
+    }
+  }
+
+  return null;
+}
+
+function mapExistingArtifactPath(targetPath, pathMapper) {
+  if (!targetPath || !fs.existsSync(targetPath)) return null;
+  return pathMapper(targetPath);
+}
+
+function collectRunArtifacts(ultralyticsRunDir, pathMapper) {
+  const images = [];
+  const tables = [];
+  const weights = [];
+
+  listFilesRecursive(ultralyticsRunDir).forEach((filePath) => {
+    const relativePath = path.relative(ultralyticsRunDir, filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const baseEntry = {
+      key: createArtifactKey(relativePath),
+      label: humanizeArtifactName(relativePath),
+      path: pathMapper(filePath),
+      relative_path: relativePath,
+    };
+
+    if (IMAGE_ARTIFACT_EXTENSIONS.has(ext)) {
+      images.push({
+        ...baseEntry,
+        category: classifyImageArtifact(relativePath),
+      });
+      return;
+    }
+
+    if (ext === '.pt') {
+      weights.push(baseEntry);
+      return;
+    }
+
+    if (['.csv', '.yaml', '.yml', '.json', '.txt'].includes(ext)) {
+      tables.push({
+        ...baseEntry,
+        format: ext.slice(1).toUpperCase(),
+      });
+    }
+  });
+
+  return { images, tables, weights };
+}
+
+function buildArtifactManifestPayload({
+  ultralyticsRunDir = null,
+  stableBestModel = null,
+  bestWeights = null,
+  evaluation = {},
+  pathMapper = (value) => value,
+}) {
+  const manifest = {
+    generated_at: new Date().toISOString(),
+    ultralytics_run_dir: mapExistingArtifactPath(ultralyticsRunDir, pathMapper),
+    images: [],
+    tables: [],
+    weights: [],
+    evaluation: {
+      metrics_path: mapExistingArtifactPath(evaluation.metrics_path, pathMapper),
+      review_manifest_path: mapExistingArtifactPath(evaluation.review_manifest_path, pathMapper),
+      review_csv_path: mapExistingArtifactPath(evaluation.review_csv_path, pathMapper),
+      review_images_dir: mapExistingArtifactPath(evaluation.review_images_dir, pathMapper),
+    },
+    counts: {
+      imageCount: 0,
+      plotCount: 0,
+      previewCount: 0,
+      tableCount: 0,
+      weightCount: 0,
+    },
+  };
+
+  if (ultralyticsRunDir && fs.existsSync(ultralyticsRunDir)) {
+    const collected = collectRunArtifacts(ultralyticsRunDir, pathMapper);
+    manifest.images = collected.images;
+    manifest.tables = collected.tables;
+    manifest.weights = collected.weights;
+  }
+
+  const stableBestEntry = mapExistingArtifactPath(stableBestModel, pathMapper);
+  if (stableBestEntry) {
+    manifest.weights.unshift({
+      key: 'stable_best_model',
+      label: 'Stable Best Model',
+      path: stableBestEntry,
+      relative_path: path.basename(stableBestModel),
+    });
+  }
+
+  const bestWeightsEntry = mapExistingArtifactPath(bestWeights, pathMapper);
+  if (bestWeightsEntry && bestWeightsEntry !== stableBestEntry) {
+    manifest.weights.unshift({
+      key: 'best_weights',
+      label: 'Best Training Weights',
+      path: bestWeightsEntry,
+      relative_path: ultralyticsRunDir && bestWeights.startsWith(ultralyticsRunDir)
+        ? path.relative(ultralyticsRunDir, bestWeights)
+        : path.basename(bestWeights),
+    });
+  }
+
+  manifest.counts.imageCount = manifest.images.length;
+  manifest.counts.plotCount = manifest.images.filter((item) => item.category === 'plot').length;
+  manifest.counts.previewCount = manifest.images.filter((item) => item.category === 'preview').length;
+  manifest.counts.tableCount = manifest.tables.length;
+  manifest.counts.weightCount = manifest.weights.length;
+  return manifest;
+}
+
+function inferArtifactManifest(projectRoot, summaryPath, summary) {
+  const ultralyticsRunDir = resolveUltralyticsRunDir(projectRoot, summaryPath, summary);
+  return buildArtifactManifestPayload({
+    ultralyticsRunDir,
+    stableBestModel: summary?.stable_best_model || null,
+    bestWeights: summary?.best_weights || null,
+    evaluation: summary?.evaluation || {},
+  });
+}
+
+function readActiveModelSelection(projectRoot) {
+  return readJsonFileSafe(getActiveModelConfigPath(projectRoot));
+}
+
+function writeActiveModelSelection(projectRoot, payload) {
+  const activeModelPath = getActiveModelConfigPath(projectRoot);
+  fs.mkdirSync(path.dirname(activeModelPath), { recursive: true });
+  fs.writeFileSync(activeModelPath, JSON.stringify(payload, null, 2), 'utf-8');
+}
+
+function resolveActiveModel(projectRoot) {
+  const activeSelection = readActiveModelSelection(projectRoot);
+  if (activeSelection && typeof activeSelection === 'object') {
+    const summaryPath = resolveProjectPath(projectRoot, activeSelection.summary_path || activeSelection.summaryPath || null);
+    const weightsPath = resolveProjectPath(projectRoot, activeSelection.weights_path || activeSelection.weightsPath || activeSelection.model_path || null);
+
+    if (weightsPath && fs.existsSync(weightsPath)) {
+      return {
+        ...activeSelection,
+        summaryPath: summaryPath && fs.existsSync(summaryPath) ? path.resolve(summaryPath) : null,
+        weightsPath: path.resolve(weightsPath),
+        activatedAt: activeSelection.activated_at || activeSelection.activatedAt || null,
+      };
+    }
+  }
+
+  const fallbackWeightsPath = path.join(getModelsRoot(projectRoot), 'best_model.pt');
+  const fallbackSummaryPath = path.join(getModelsRoot(projectRoot), 'training_summary.json');
+  if (!fs.existsSync(fallbackWeightsPath)) {
+    return null;
+  }
+
+  return {
+    source: 'current',
+    summaryPath: fs.existsSync(fallbackSummaryPath) ? path.resolve(fallbackSummaryPath) : null,
+    weightsPath: path.resolve(fallbackWeightsPath),
+    activatedAt: null,
+    fallback: true,
+  };
+}
+
 function loadTrainingArtifactsFromSummaryPath(projectRoot, summaryPath) {
   const resolvedSummaryPath = path.resolve(summaryPath);
   const summary = readJsonFileSafe(resolvedSummaryPath);
@@ -216,12 +520,22 @@ function loadTrainingArtifactsFromSummaryPath(projectRoot, summaryPath) {
   const resolvedSummary = resolveTrainingSummaryPaths(projectRoot, resolvedSummaryPath, summary);
   const reviewManifestPath = resolvedSummary?.evaluation?.review_manifest_path || null;
   const metricsPath = resolvedSummary?.evaluation?.metrics_path || null;
+  const summaryDir = path.dirname(resolvedSummaryPath);
+  const artifactManifestPath = resolvedSummary?.artifact_manifest_path || path.join(summaryDir, 'artifact_manifest.json');
+  const artifactManifest = resolveArtifactManifestPaths(
+    projectRoot,
+    resolvedSummaryPath,
+    readJsonFileSafe(artifactManifestPath) || inferArtifactManifest(projectRoot, resolvedSummaryPath, resolvedSummary),
+  );
+  const trainingResultsCsvPath = artifactManifest?.tables?.find((item) => item.key === 'results_csv')?.path || null;
 
   return {
     summary: resolvedSummary,
     summaryPath: resolvedSummaryPath,
     reviewManifest: resolveReviewManifestPaths(projectRoot, resolvedSummaryPath, readJsonFileSafe(reviewManifestPath)),
     testMetrics: readJsonFileSafe(metricsPath),
+    artifactManifest,
+    trainingResultsRows: readCsvFileSafe(trainingResultsCsvPath),
   };
 }
 
@@ -305,12 +619,41 @@ function buildTrainingRunDedupKey(summary) {
     ].join('|');
 }
 
-function buildTrainingRunRecordFromArtifacts(artifacts, source = 'history') {
+function activateTrainingRunSelection(projectRoot, artifacts, source = 'history') {
+  if (!artifacts?.summary || !artifacts?.summaryPath) {
+    throw new Error('Cannot activate a run without loaded training artifacts.');
+  }
+
+  const weightsPath = artifacts.summary?.stable_best_model;
+  if (!weightsPath || !fs.existsSync(weightsPath)) {
+    throw new Error(`Active model weights were not found at ${weightsPath || 'unknown path'}.`);
+  }
+
+  const payload = {
+    activated_at: new Date().toISOString(),
+    source,
+    run_id: artifacts.summary?.run_id || null,
+    summary_path: relativeProjectPath(projectRoot, artifacts.summaryPath),
+    weights_path: relativeProjectPath(projectRoot, weightsPath),
+    model_choice: artifacts.summary?.model_choice || null,
+    dataset_name: artifacts.summary?.training_source?.dataset_name || null,
+  };
+  writeActiveModelSelection(projectRoot, payload);
+  return resolveActiveModel(projectRoot);
+}
+
+function buildTrainingRunRecordFromArtifacts(artifacts, options = {}) {
   if (!artifacts?.summary || !artifacts?.summaryPath) return null;
 
+  const {
+    source = 'history',
+    isActive = false,
+    activatedAt = null,
+  } = options;
   const summary = artifacts.summary;
   const metrics = summary?.evaluation?.metrics || artifacts.testMetrics?.aggregate_metrics || {};
   const reviewSummary = summary?.evaluation?.review_summary || artifacts.reviewManifest?.summary || {};
+  const artifactCounts = artifacts?.artifactManifest?.counts || {};
   const modelChoice = summary?.model_choice || null;
   const fallbackModelLabel = summary?.chosen_model
     ? path.parse(summary.chosen_model).name
@@ -333,18 +676,34 @@ function buildTrainingRunRecordFromArtifacts(artifacts, source = 'history') {
     imageSize: Number(summary?.imgsz ?? 0) || null,
     requestedDeviceMode: summary?.requested_device_mode || null,
     device: summary?.device || null,
+    isActive,
+    activatedAt,
     reviewConfidenceThreshold: summary?.evaluation?.confidence_threshold ?? null,
     metrics: {
       precision: typeof metrics?.precision === 'number' ? metrics.precision : null,
       recall: typeof metrics?.recall === 'number' ? metrics.recall : null,
       map50: typeof metrics?.map50 === 'number' ? metrics.map50 : null,
+      map75: typeof metrics?.map75 === 'number' ? metrics.map75 : null,
       map50_95: typeof metrics?.map50_95 === 'number' ? metrics.map50_95 : null,
+      fitness: typeof metrics?.fitness === 'number' ? metrics.fitness : null,
     },
+    perClass: Array.isArray(metrics?.per_class) ? metrics.per_class : [],
+    resultsDict: metrics?.results_dict && typeof metrics.results_dict === 'object' ? metrics.results_dict : {},
     reviewSummary: {
       images: Number(reviewSummary?.images ?? 0) || 0,
       matched_boxes: Number(reviewSummary?.matched_boxes ?? 0) || 0,
       false_positive_boxes: Number(reviewSummary?.false_positive_boxes ?? 0) || 0,
       missed_ground_truth_boxes: Number(reviewSummary?.missed_ground_truth_boxes ?? 0) || 0,
+      status_counts: reviewSummary?.status_counts && typeof reviewSummary.status_counts === 'object'
+        ? reviewSummary.status_counts
+        : {},
+    },
+    artifactSummary: {
+      imageCount: Number(artifactCounts.imageCount ?? 0) || 0,
+      plotCount: Number(artifactCounts.plotCount ?? 0) || 0,
+      previewCount: Number(artifactCounts.previewCount ?? 0) || 0,
+      tableCount: Number(artifactCounts.tableCount ?? 0) || 0,
+      weightCount: Number(artifactCounts.weightCount ?? 0) || 0,
     },
   };
 }
@@ -369,8 +728,13 @@ function archiveTrainingArtifacts(projectRoot, artifacts) {
   ].join('_');
   const archiveDir = ensureUniqueDirectory(historyRoot, archiveName);
   const archiveEvaluationDir = path.join(archiveDir, 'test_evaluation');
+  const archiveUltralyticsRunDir = path.join(archiveDir, 'ultralytics_run');
+  const sourceUltralyticsRunDir = resolveUltralyticsRunDir(projectRoot, artifacts.summaryPath, artifacts.summary);
 
   copyFileIfExists(stableBestModel, path.join(archiveDir, 'best_model.pt'));
+  if (sourceUltralyticsRunDir) {
+    copyDirectoryRecursive(sourceUltralyticsRunDir, archiveUltralyticsRunDir);
+  }
 
   if (artifacts.summary?.evaluation?.metrics_path) {
     copyFileIfExists(artifacts.summary.evaluation.metrics_path, path.join(archiveEvaluationDir, 'test_metrics.json'));
@@ -410,8 +774,15 @@ function archiveTrainingArtifacts(projectRoot, artifacts) {
   }
 
   const archivedSummary = JSON.parse(JSON.stringify(artifacts.summary));
-  archivedSummary.best_weights = 'best_model.pt';
+  archivedSummary.best_weights = fs.existsSync(path.join(archiveUltralyticsRunDir, 'weights', 'best.pt'))
+    ? path.join('ultralytics_run', 'weights', 'best.pt')
+    : 'best_model.pt';
   archivedSummary.stable_best_model = 'best_model.pt';
+  if (fs.existsSync(archiveUltralyticsRunDir)) {
+    archivedSummary.ultralytics_run_dir = 'ultralytics_run';
+  } else {
+    delete archivedSummary.ultralytics_run_dir;
+  }
   archivedSummary.archive = {
     archived_at: new Date().toISOString(),
     source_summary_path: path.relative(projectRoot, artifacts.summaryPath),
@@ -433,6 +804,24 @@ function archiveTrainingArtifacts(projectRoot, artifacts) {
     }
   }
 
+  const archiveArtifactManifestPath = path.join(archiveDir, 'artifact_manifest.json');
+  const artifactManifest = buildArtifactManifestPayload({
+    ultralyticsRunDir: fs.existsSync(archiveUltralyticsRunDir) ? archiveUltralyticsRunDir : null,
+    stableBestModel: path.join(archiveDir, 'best_model.pt'),
+    bestWeights: fs.existsSync(path.join(archiveUltralyticsRunDir, 'weights', 'best.pt'))
+      ? path.join(archiveUltralyticsRunDir, 'weights', 'best.pt')
+      : path.join(archiveDir, 'best_model.pt'),
+    evaluation: {
+      metrics_path: path.join(archiveEvaluationDir, 'test_metrics.json'),
+      review_manifest_path: path.join(archiveEvaluationDir, 'test_review_manifest.json'),
+      review_csv_path: path.join(archiveEvaluationDir, 'test_predictions.csv'),
+      review_images_dir: path.join(archiveEvaluationDir, 'test_review_images'),
+    },
+    pathMapper: (targetPath) => path.relative(archiveDir, targetPath),
+  });
+  fs.writeFileSync(archiveArtifactManifestPath, JSON.stringify(artifactManifest, null, 2), 'utf-8');
+  archivedSummary.artifact_manifest_path = 'artifact_manifest.json';
+
   const archiveSummaryPath = path.join(archiveDir, 'training_summary.json');
   fs.writeFileSync(archiveSummaryPath, JSON.stringify(archivedSummary, null, 2), 'utf-8');
   return loadTrainingArtifactsFromSummaryPath(projectRoot, archiveSummaryPath);
@@ -441,7 +830,33 @@ function archiveTrainingArtifacts(projectRoot, artifacts) {
 function listTrainingRuns(projectRoot) {
   const runs = [];
   const seen = new Set();
+  const activeModel = resolveActiveModel(projectRoot);
+  const activeSummaryPath = activeModel?.summaryPath ? path.resolve(activeModel.summaryPath) : null;
+  let activeDedupKey = null;
+  if (activeSummaryPath && fs.existsSync(activeSummaryPath)) {
+    const activeArtifacts = loadTrainingArtifactsFromSummaryPath(projectRoot, activeSummaryPath);
+    if (!activeArtifacts.error) {
+      activeDedupKey = buildTrainingRunDedupKey(activeArtifacts.summary);
+    }
+  }
   const historyRoot = getModelHistoryRoot(projectRoot);
+
+  const appendRun = (artifacts, source) => {
+    if (artifacts.error) return;
+
+    const dedupKey = buildTrainingRunDedupKey(artifacts.summary);
+    if (seen.has(dedupKey)) return;
+    seen.add(dedupKey);
+
+    const isActive = (activeSummaryPath && path.resolve(artifacts.summaryPath) === activeSummaryPath)
+      || (activeDedupKey && dedupKey === activeDedupKey);
+    const record = buildTrainingRunRecordFromArtifacts(artifacts, {
+      source,
+      isActive,
+      activatedAt: isActive ? activeModel?.activatedAt || null : null,
+    });
+    if (record) runs.push(record);
+  };
 
   if (fs.existsSync(historyRoot)) {
     const historyDirs = fs.readdirSync(historyRoot, { withFileTypes: true })
@@ -449,26 +864,12 @@ function listTrainingRuns(projectRoot) {
       .map((entry) => path.join(historyRoot, entry.name));
 
     historyDirs.forEach((dirPath) => {
-      const artifacts = loadTrainingArtifactsFromSummaryPath(projectRoot, path.join(dirPath, 'training_summary.json'));
-      if (artifacts.error) return;
-
-      const dedupKey = buildTrainingRunDedupKey(artifacts.summary);
-      if (seen.has(dedupKey)) return;
-      seen.add(dedupKey);
-
-      const record = buildTrainingRunRecordFromArtifacts(artifacts, 'history');
-      if (record) runs.push(record);
+      appendRun(loadTrainingArtifactsFromSummaryPath(projectRoot, path.join(dirPath, 'training_summary.json')), 'history');
     });
   }
 
   const currentArtifacts = loadTrainingArtifacts(projectRoot);
-  if (!currentArtifacts.error) {
-    const dedupKey = buildTrainingRunDedupKey(currentArtifacts.summary);
-    if (!seen.has(dedupKey)) {
-      const record = buildTrainingRunRecordFromArtifacts(currentArtifacts, 'current');
-      if (record) runs.push(record);
-    }
-  }
+  appendRun(currentArtifacts, 'current');
 
   return runs.sort((left, right) => {
     const leftTime = left?.createdAt ? new Date(left.createdAt).getTime() : 0;
@@ -803,13 +1204,19 @@ ipcMain.handle('run-prediction', async (event, imagePath) => {
     const projectRoot = path.join(__dirname, '..');
     const pythonExe = path.join(projectRoot, '.venv', 'Scripts', 'python.exe');
     const scriptPath = path.join(projectRoot, 'src', 'predict_cli.py');
+    const activeModel = resolveActiveModel(projectRoot);
 
     // Get downloads path and create a unique filename
     const downloadsPath = app.getPath('downloads');
     const timestamp = new Date().getTime();
     const savePath = path.join(downloadsPath, `prediction_${timestamp}.png`);
 
-    const pythonProcess = spawn(pythonExe, [scriptPath, imagePath, '--save_path', savePath], {
+    const pythonArgs = [scriptPath, imagePath, '--save_path', savePath];
+    if (activeModel?.weightsPath) {
+      pythonArgs.push('--model', activeModel.weightsPath);
+    }
+
+    const pythonProcess = spawn(pythonExe, pythonArgs, {
       cwd: projectRoot,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     });
@@ -850,6 +1257,7 @@ ipcMain.handle('start-video-prediction', async (event, payload = {}) => {
     const scriptPath = path.join(projectRoot, 'src', 'predict_video_cli.py');
     const videoPath = String(payload.videoPath || '').trim();
     const mode = String(payload.mode || 'precompute').trim().toLowerCase();
+    const activeModel = resolveActiveModel(projectRoot);
 
     if (!videoPath) {
       resolve({ error: 'No video path was provided.' });
@@ -873,7 +1281,12 @@ ipcMain.handle('start-video-prediction', async (event, payload = {}) => {
     }
 
     const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const child = spawn(pythonExe, [scriptPath, videoPath, '--mode', mode], {
+    const pythonArgs = [scriptPath, videoPath, '--mode', mode];
+    if (activeModel?.weightsPath) {
+      pythonArgs.push('--model', activeModel.weightsPath);
+    }
+
+    const child = spawn(pythonExe, pythonArgs, {
       cwd: projectRoot,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
     });
@@ -1514,10 +1927,19 @@ ipcMain.handle('run-training', async (event, payload = {}) => {
 
             let resultArtifacts = artifacts;
             let historyWarning = null;
+            let activationWarning = null;
             try {
                 resultArtifacts = archiveTrainingArtifacts(projectRoot, artifacts);
             } catch (archiveError) {
                 historyWarning = `Training finished, but saving the model history snapshot failed: ${archiveError.message}`;
+            }
+
+            let activeModel = null;
+            try {
+                const activationSource = resultArtifacts.summaryPath.includes(`${path.sep}${MODEL_HISTORY_DIRNAME}${path.sep}`) ? 'history' : 'current';
+                activeModel = activateTrainingRunSelection(projectRoot, resultArtifacts, activationSource);
+            } catch (activationError) {
+                activationWarning = `Training finished, but activating the saved model failed: ${activationError.message}`;
             }
 
             resolve({
@@ -1526,11 +1948,19 @@ ipcMain.handle('run-training', async (event, payload = {}) => {
                 summaryPath: resultArtifacts.summaryPath,
                 reviewManifest: resultArtifacts.reviewManifest,
                 testMetrics: resultArtifacts.testMetrics,
+                artifactManifest: resultArtifacts.artifactManifest,
+                trainingResultsRows: resultArtifacts.trainingResultsRows,
                 savedRun: buildTrainingRunRecordFromArtifacts(
                     resultArtifacts,
-                    resultArtifacts.summaryPath.includes(`${path.sep}${MODEL_HISTORY_DIRNAME}${path.sep}`) ? 'history' : 'current',
+                    {
+                        source: resultArtifacts.summaryPath.includes(`${path.sep}${MODEL_HISTORY_DIRNAME}${path.sep}`) ? 'history' : 'current',
+                        isActive: Boolean(activeModel),
+                        activatedAt: activeModel?.activatedAt || null,
+                    },
                 ),
                 historyWarning,
+                activationWarning,
+                activeModel,
             });
         });
     });
@@ -1563,16 +1993,81 @@ ipcMain.handle('load-training-run', async (event, summaryPath) => {
             return { error: artifacts.error };
         }
 
+        const activeModel = resolveActiveModel(projectRoot);
+        let activeDedupKey = null;
+        if (activeModel?.summaryPath && fs.existsSync(activeModel.summaryPath)) {
+            const activeArtifacts = loadTrainingArtifactsFromSummaryPath(projectRoot, activeModel.summaryPath);
+            if (!activeArtifacts.error) {
+                activeDedupKey = buildTrainingRunDedupKey(activeArtifacts.summary);
+            }
+        }
+        const isActive = (activeModel?.summaryPath && path.resolve(artifacts.summaryPath) === path.resolve(activeModel.summaryPath))
+            || (activeDedupKey && buildTrainingRunDedupKey(artifacts.summary) === activeDedupKey);
+
         return {
             success: true,
             summary: artifacts.summary,
             summaryPath: artifacts.summaryPath,
             reviewManifest: artifacts.reviewManifest,
             testMetrics: artifacts.testMetrics,
+            artifactManifest: artifacts.artifactManifest,
+            trainingResultsRows: artifacts.trainingResultsRows,
             savedRun: buildTrainingRunRecordFromArtifacts(
                 artifacts,
-                resolvedSummaryPath.includes(`${path.sep}${MODEL_HISTORY_DIRNAME}${path.sep}`) ? 'history' : 'current',
+                {
+                    source: resolvedSummaryPath.includes(`${path.sep}${MODEL_HISTORY_DIRNAME}${path.sep}`) ? 'history' : 'current',
+                    isActive,
+                    activatedAt: isActive ? activeModel?.activatedAt || null : null,
+                },
             ),
+            activeModel,
+        };
+    } catch (error) {
+        return { error: error.message };
+    }
+});
+
+ipcMain.handle('activate-training-run', async (event, summaryPath) => {
+    try {
+        const projectRoot = path.join(__dirname, '..');
+        const modelsRoot = getModelsRoot(projectRoot);
+        const resolvedSummaryPath = path.resolve(String(summaryPath || ''));
+
+        if (!resolvedSummaryPath) {
+            return { error: 'A saved training run path is required.' };
+        }
+        if (!isPathInsideDirectory(modelsRoot, resolvedSummaryPath)) {
+            return { error: 'Saved training runs can only be activated from the models directory.' };
+        }
+
+        const artifacts = loadTrainingArtifactsFromSummaryPath(projectRoot, resolvedSummaryPath);
+        if (artifacts.error) {
+            return { error: artifacts.error };
+        }
+
+        const activeModel = activateTrainingRunSelection(
+            projectRoot,
+            artifacts,
+            resolvedSummaryPath.includes(`${path.sep}${MODEL_HISTORY_DIRNAME}${path.sep}`) ? 'history' : 'current',
+        );
+
+        return {
+            success: true,
+            summary: artifacts.summary,
+            summaryPath: artifacts.summaryPath,
+            reviewManifest: artifacts.reviewManifest,
+            testMetrics: artifacts.testMetrics,
+            artifactManifest: artifacts.artifactManifest,
+            trainingResultsRows: artifacts.trainingResultsRows,
+            savedRun: buildTrainingRunRecordFromArtifacts(
+                artifacts,
+                {
+                    source: resolvedSummaryPath.includes(`${path.sep}${MODEL_HISTORY_DIRNAME}${path.sep}`) ? 'history' : 'current',
+                    isActive: true,
+                    activatedAt: activeModel?.activatedAt || null,
+                },
+            ),
+            activeModel,
         };
     } catch (error) {
         return { error: error.message };

@@ -113,6 +113,17 @@ def _to_jsonable(value):
     return value
 
 
+def _project_relative_path(path_value: Path | str | None) -> str | None:
+    if path_value is None:
+        return None
+
+    resolved = Path(path_value).resolve()
+    try:
+        return str(resolved.relative_to(PROJECT_ROOT))
+    except ValueError:
+        return str(resolved)
+
+
 def _clamp_ratio(value: float, name: str) -> float:
     if value <= 0 or value >= 1:
         raise ValueError(f"{name} must be between 0 and 1 (exclusive), received {value}.")
@@ -892,6 +903,9 @@ def main():
         "chosen_model": model_source,
         "best_weights": str(best_weights),
         "stable_best_model": str(stable_best),
+        "ultralytics_run_dir": _project_relative_path(
+            best_weights.parent.parent if best_weights.parent.name == "weights" else best_weights.parent
+        ),
         "training_source": training_source,
         "dataset": dataset_stats,
         "epochs": args.epochs,

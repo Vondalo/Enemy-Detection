@@ -16,6 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from ultralytics import YOLO
+from src.model import resolve_inference_model_source
 
 
 def _emit(event_type: str, **payload) -> None:
@@ -116,14 +117,14 @@ def main():
     parser.add_argument("video_path", help="Path to the input video.")
     parser.add_argument("--mode", choices=["precompute", "stream"], default="precompute",
                         help="Inference mode requested by the UI.")
-    parser.add_argument("--model", default=str(PROJECT_ROOT / "models" / "best_model.pt"),
-                        help="Path to trained detector weights.")
+    parser.add_argument("--model", default=None,
+                        help="Path to trained detector weights. Defaults to the active model, then models/best_model.pt.")
     parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold.")
     parser.add_argument("--max_det", type=int, default=10, help="Maximum detections per frame.")
     args = parser.parse_args()
 
     video_path = Path(args.video_path)
-    model_path = Path(args.model)
+    model_path = Path(resolve_inference_model_source(args.model, PROJECT_ROOT))
 
     if not video_path.exists():
         _emit("error", message=f"Video not found: {video_path}")

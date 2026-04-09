@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
@@ -49,6 +50,8 @@ MODEL_CHOICES: Dict[str, DetectorChoice] = {
 }
 
 DEFAULT_MODEL_CHOICE = "yolov8n"
+ACTIVE_MODEL_FILENAME = "active_model.json"
+DEFAULT_INFERENCE_MODEL_PATH = Path("models") / "best_model.pt"
 
 
 def list_model_choices() -> List[DetectorChoice]:
@@ -85,6 +88,64 @@ def resolve_model_source(model_name: str | None, project_root: str | Path | None
         return choice.weights
 
     return target
+
+
+def _resolve_project_root(project_root: str | Path | None = None) -> Path:
+    if project_root is not None:
+        return Path(project_root)
+    return Path(__file__).resolve().parents[1]
+
+
+def _resolve_existing_project_path(project_root: Path, candidate_path: str | Path | None) -> Path | None:
+    if not candidate_path:
+        return None
+
+    candidate = Path(candidate_path)
+    if candidate.is_absolute():
+        return candidate if candidate.exists() else None
+
+    rooted = project_root / candidate
+    return rooted if rooted.exists() else None
+
+
+def read_active_model_selection(project_root: str | Path | None = None) -> dict | None:
+    root = _resolve_project_root(project_root)
+    active_model_path = root / "models" / ACTIVE_MODEL_FILENAME
+    if not active_model_path.exists():
+        return None
+
+    try:
+        payload = json.loads(active_model_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    return payload if isinstance(payload, dict) else None
+
+
+def resolve_active_model_weights(project_root: str | Path | None = None) -> str | None:
+    root = _resolve_project_root(project_root)
+    active_selection = read_active_model_selection(root)
+    if not active_selection:
+        return None
+
+    for key in ("weights_path", "model_path", "stable_best_model"):
+        resolved = _resolve_existing_project_path(root, active_selection.get(key))
+        if resolved is not None:
+            return str(resolved)
+
+    return None
+
+
+def resolve_inference_model_source(model_name: str | None, project_root: str | Path | None = None) -> str:
+    root = _resolve_project_root(project_root)
+    if model_name:
+        return resolve_model_source(model_name, root)
+
+    active_weights = resolve_active_model_weights(root)
+    if active_weights:
+        return active_weights
+
+    return str(root / DEFAULT_INFERENCE_MODEL_PATH)
 
 
 def format_model_choices() -> str:

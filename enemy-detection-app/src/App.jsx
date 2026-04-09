@@ -178,8 +178,11 @@ const Presentation = () => {
     const [trainedModels, setTrainedModels] = useState([]);
     const [selectedTrainingSummaryPath, setSelectedTrainingSummaryPath] = useState('');
     const [isLoadingTrainingRun, setIsLoadingTrainingRun] = useState(false);
+    const [isActivatingTrainingRun, setIsActivatingTrainingRun] = useState(false);
     const [trainingSummary, setTrainingSummary] = useState(null);
     const [testReviewManifest, setTestReviewManifest] = useState(null);
+    const [trainingArtifactManifest, setTrainingArtifactManifest] = useState(null);
+    const [trainingResultsRows, setTrainingResultsRows] = useState([]);
     const [mergeSelections, setMergeSelections] = useState({});
     const [mergeOutputName, setMergeOutputName] = useState('');
 
@@ -192,6 +195,7 @@ const Presentation = () => {
     const isCollectorWorkspaceActive = currentSlide === 1 && Boolean(collectorSession);
     const trainingLogsRef = useRef(null);
     const selectedDatasetTrainable = Boolean(selectedDataset?.hasImages);
+    const activeTrainingRun = trainedModels.find((run) => run.isActive) || null;
 
     const appendLog = (...entries) => {
         const nextEntries = entries.flat().filter(Boolean);
@@ -224,6 +228,8 @@ const Presentation = () => {
             setSelectedTrainingSummaryPath(result.summaryPath || summaryPath);
             setTrainingSummary(result.summary || null);
             setTestReviewManifest(result.reviewManifest || null);
+            setTrainingArtifactManifest(result.artifactManifest || null);
+            setTrainingResultsRows(Array.isArray(result.trainingResultsRows) ? result.trainingResultsRows : []);
 
             if (appendSelectionLog) {
                 const runLabel = result.savedRun?.datasetName || result.summary?.training_source?.dataset_name || 'saved model';
@@ -245,6 +251,8 @@ const Presentation = () => {
             setSelectedTrainingSummaryPath('');
             setTrainingSummary(null);
             setTestReviewManifest(null);
+            setTrainingArtifactManifest(null);
+            setTrainingResultsRows([]);
             return;
         }
 
@@ -256,11 +264,38 @@ const Presentation = () => {
         const existingRun = selectedTrainingSummaryPath
             ? runs.find((run) => run.summaryPath === selectedTrainingSummaryPath)
             : null;
-        const runToLoad = preferredRun || existingRun || runs[0];
+        const activeRun = runs.find((run) => run.isActive) || null;
+        const runToLoad = preferredRun || existingRun || activeRun || runs[0];
 
         if (!runToLoad) return;
         if (runToLoad.summaryPath === selectedTrainingSummaryPath && trainingSummary) return;
         await handleLoadTrainingRun(runToLoad.summaryPath, { appendSelectionLog });
+    };
+
+    const handleActivateTrainingRun = async (summaryPath) => {
+        if (!summaryPath) return false;
+
+        setIsActivatingTrainingRun(true);
+        try {
+            const result = await window.electronAPI.activateTrainingRun(summaryPath);
+            if (!result.success) {
+                appendLog(`[Error] ${result.error}`);
+                return false;
+            }
+
+            setSelectedTrainingSummaryPath(result.summaryPath || summaryPath);
+            setTrainingSummary(result.summary || null);
+            setTestReviewManifest(result.reviewManifest || null);
+            setTrainingArtifactManifest(result.artifactManifest || null);
+            setTrainingResultsRows(Array.isArray(result.trainingResultsRows) ? result.trainingResultsRows : []);
+            await handleFetchTrainingRuns(result.summaryPath || summaryPath, { autoLoad: false });
+
+            const runLabel = result.savedRun?.datasetName || result.summary?.training_source?.dataset_name || 'saved model';
+            appendLog(`[Model] Activated ${runLabel}. New predictions will use this model.`);
+            return true;
+        } finally {
+            setIsActivatingTrainingRun(false);
+        }
     };
 
     const handleFetchDatasets = async () => {
@@ -562,6 +597,8 @@ const Presentation = () => {
         setIsRunning(true);
         setTrainingSummary(null);
         setTestReviewManifest(null);
+        setTrainingArtifactManifest(null);
+        setTrainingResultsRows([]);
         setLogs([
             `> Starting training on dataset: ${selectedDataset.name}`,
             `> CSV: ${selectedCsv}`,
@@ -589,6 +626,8 @@ const Presentation = () => {
             setSelectedTrainingSummaryPath(savedSummaryPath);
             setTrainingSummary(result.summary || null);
             setTestReviewManifest(result.reviewManifest || null);
+            setTrainingArtifactManifest(result.artifactManifest || null);
+            setTrainingResultsRows(Array.isArray(result.trainingResultsRows) ? result.trainingResultsRows : []);
             await handleFetchTrainingRuns(savedSummaryPath, { autoLoad: false });
             const metrics = result.summary?.evaluation?.metrics || result.testMetrics?.aggregate_metrics || {};
             setLogs(prev => [
@@ -600,6 +639,7 @@ const Presentation = () => {
                 `[Eval] mAP50-95: ${formatPercent(metrics.map50_95)}`,
                 `[Model] Saved snapshot: ${savedSummaryPath || 'latest model history entry'}`,
                 ...(result.historyWarning ? [`[Warning] ${result.historyWarning}`] : []),
+                ...(result.activationWarning ? [`[Warning] ${result.activationWarning}`] : ['[Model] Activated the newly trained model for future predictions.']),
             ]);
         } else {
             setLogs(prev => [...prev, `\n[Error] ${result.error}`]);
@@ -1272,16 +1312,15 @@ const Presentation = () => {
                                 <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3">
                                     {trainedModels.map((run) => {
                                         const isSelected = run.summaryPath === selectedTrainingSummaryPath;
+                                        const runActionBusy = isLoadingTrainingRun || isActivatingTrainingRun;
                                         return (
-                                            <button
+                                            <div
                                                 key={run.id}
-                                                onClick={() => handleLoadTrainingRun(run.summaryPath)}
-                                                disabled={isLoadingTrainingRun}
                                                 className={`text-left rounded-2xl border p-4 transition ${
                                                     isSelected
                                                         ? 'border-rose-500/40 bg-rose-500/10'
                                                         : 'border-slate-800 bg-slate-950/70 hover:bg-slate-900'
-                                                } ${isLoadingTrainingRun ? 'opacity-70' : ''}`}
+                                                } ${runActionBusy ? 'opacity-90' : ''}`}
                                             >
                                                 <div className="flex items-start justify-between gap-3">
                                                     <div className="min-w-0">
@@ -1290,13 +1329,22 @@ const Presentation = () => {
                                                             {run.csvName || 'No CSV recorded'}
                                                         </div>
                                                     </div>
-                                                    <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em] ${
-                                                        run.source === 'current'
-                                                            ? 'border-amber-400/30 bg-amber-500/10 text-amber-100'
-                                                            : 'border-slate-700 bg-slate-900 text-slate-300'
-                                                    }`}>
-                                                        {run.source}
-                                                    </span>
+                                                    <div className="flex flex-col items-end gap-2">
+                                                        <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em] ${
+                                                            run.isActive
+                                                                ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100'
+                                                                : 'border-slate-700 bg-slate-900 text-slate-300'
+                                                        }`}>
+                                                            {run.isActive ? 'active' : 'inactive'}
+                                                        </span>
+                                                        <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em] ${
+                                                            run.source === 'current'
+                                                                ? 'border-amber-400/30 bg-amber-500/10 text-amber-100'
+                                                                : 'border-slate-700 bg-slate-900 text-slate-300'
+                                                        }`}>
+                                                            {run.source}
+                                                        </span>
+                                                    </div>
                                                 </div>
 
                                                 <div className="mt-3 text-sm text-slate-200 font-semibold">
@@ -1309,17 +1357,25 @@ const Presentation = () => {
                                                         <div className="mt-1 text-white font-bold">{formatPercent(run.metrics?.map50)}</div>
                                                     </div>
                                                     <div className="rounded-lg border border-slate-800 bg-black/30 p-2">
+                                                        <div className="text-slate-500 uppercase tracking-widest">mAP75</div>
+                                                        <div className="mt-1 text-white font-bold">{formatPercent(run.metrics?.map75)}</div>
+                                                    </div>
+                                                    <div className="rounded-lg border border-slate-800 bg-black/30 p-2">
                                                         <div className="text-slate-500 uppercase tracking-widest">mAP50-95</div>
                                                         <div className="mt-1 text-white font-bold">{formatPercent(run.metrics?.map50_95)}</div>
+                                                    </div>
+                                                    <div className="rounded-lg border border-slate-800 bg-black/30 p-2">
+                                                        <div className="text-slate-500 uppercase tracking-widest">Fitness</div>
+                                                        <div className="mt-1 text-white font-bold">{formatPercent(run.metrics?.fitness)}</div>
                                                     </div>
                                                     <div className="rounded-lg border border-slate-800 bg-black/30 p-2">
                                                         <div className="text-slate-500 uppercase tracking-widest">Epochs</div>
                                                         <div className="mt-1 text-white font-bold">{run.epochs ?? 'n/a'}</div>
                                                     </div>
                                                     <div className="rounded-lg border border-slate-800 bg-black/30 p-2">
-                                                        <div className="text-slate-500 uppercase tracking-widest">Review Conf</div>
+                                                        <div className="text-slate-500 uppercase tracking-widest">Plots</div>
                                                         <div className="mt-1 text-white font-bold">
-                                                            {typeof run.reviewConfidenceThreshold === 'number' ? `${Math.round(run.reviewConfidenceThreshold * 100)}%` : 'n/a'}
+                                                            {run.artifactSummary?.plotCount ?? 0}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -1327,7 +1383,33 @@ const Presentation = () => {
                                                 <div className="mt-3 text-[11px] text-slate-500 leading-relaxed">
                                                     Trained {formatTrainingTimestamp(run.createdAt)}
                                                 </div>
-                                            </button>
+                                                {run.isActive && run.activatedAt && (
+                                                    <div className="mt-1 text-[11px] text-emerald-300 leading-relaxed">
+                                                        Active since {formatTrainingTimestamp(run.activatedAt)}
+                                                    </div>
+                                                )}
+
+                                                <div className="mt-4 flex gap-2">
+                                                    <button
+                                                        onClick={() => handleLoadTrainingRun(run.summaryPath)}
+                                                        disabled={runActionBusy}
+                                                        className="flex-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 px-3 py-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-100 transition"
+                                                    >
+                                                        View Stats
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleActivateTrainingRun(run.summaryPath)}
+                                                        disabled={runActionBusy || run.isActive}
+                                                        className={`flex-1 rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-[0.18em] transition ${
+                                                            run.isActive
+                                                                ? 'bg-emerald-500/10 text-emerald-200 border border-emerald-500/30 cursor-default'
+                                                                : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                                                        } disabled:opacity-50`}
+                                                    >
+                                                        {run.isActive ? 'Active' : 'Set Active'}
+                                                    </button>
+                                                </div>
+                                            </div>
                                         );
                                     })}
                                 </div>
@@ -1337,6 +1419,8 @@ const Presentation = () => {
                         <TrainingReviewPanel
                             summary={trainingSummary}
                             reviewManifest={testReviewManifest}
+                            artifactManifest={trainingArtifactManifest}
+                            trainingResultsRows={trainingResultsRows}
                         />
                     </div>
                 </div>
@@ -1485,9 +1569,22 @@ const Presentation = () => {
                                     )}
                                 </div>
 
+                                {activeTrainingRun && (
+                                    <div className="rounded-xl border border-emerald-700/30 bg-emerald-500/10 p-3 text-xs text-emerald-50 leading-relaxed">
+                                        <div className="font-bold uppercase tracking-[0.2em] text-emerald-200 mb-2">Active Model</div>
+                                        <div className="text-sm font-semibold text-white">
+                                            {getDetectorChoiceLabel(activeTrainingRun.modelChoice, activeTrainingRun.modelLabel)}
+                                        </div>
+                                        <div className="mt-1 text-emerald-100/80">{activeTrainingRun.datasetName}</div>
+                                        <div className="mt-2 break-all text-emerald-100/70">
+                                            {activeTrainingRun.stableBestModel || activeTrainingRun.summaryPath}
+                                        </div>
+                                    </div>
+                                )}
+
                                 {predictionSummary.modelPath && (
                                     <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-3 text-xs text-slate-400 leading-relaxed">
-                                        <div className="font-bold uppercase tracking-[0.2em] text-slate-500 mb-2">Model</div>
+                                        <div className="font-bold uppercase tracking-[0.2em] text-slate-500 mb-2">Prediction Used</div>
                                         <div className="break-all">{predictionSummary.modelPath}</div>
                                     </div>
                                 )}
@@ -1518,6 +1615,7 @@ const Presentation = () => {
                     setAppBusy={setIsRunning}
                     isVideoPredictionActive={videoPredictionActive}
                     setVideoPredictionActive={setVideoPredictionActive}
+                    activeTrainingRun={activeTrainingRun}
                 />
             )
         },

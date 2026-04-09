@@ -108,6 +108,7 @@ export default function VideoTesterWorkspace({
     setAppBusy,
     isVideoPredictionActive,
     setVideoPredictionActive,
+    activeTrainingRun,
 }) {
     const videoRef = useRef(null);
     const animationRef = useRef(null);
@@ -146,6 +147,8 @@ export default function VideoTesterWorkspace({
     const modeDescription = predictionMode === 'precompute'
         ? 'Process the whole file first, then play it back with smooth synchronized boxes.'
         : 'Start playback immediately and paint boxes as each processed frame becomes available.';
+    const displayedModelPath = videoMeta.modelPath || activeTrainingRun?.stableBestModel || 'models/active_model.json';
+    const displayedModelLabel = activeTrainingRun?.modelChoice || activeTrainingRun?.modelLabel || 'Active model';
 
     const stopSyncLoop = () => {
         if (animationRef.current) {
@@ -753,7 +756,8 @@ export default function VideoTesterWorkspace({
 
                         <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-3 text-xs text-slate-400 leading-relaxed">
                             <div className="font-bold uppercase tracking-[0.2em] text-slate-500 mb-2">Model</div>
-                            <div className="break-all">{videoMeta.modelPath || 'models/best_model.pt'}</div>
+                            <div className="text-sm font-semibold text-white mb-2">{displayedModelLabel}</div>
+                            <div className="break-all">{displayedModelPath}</div>
                         </div>
                     </div>
                 </div>
