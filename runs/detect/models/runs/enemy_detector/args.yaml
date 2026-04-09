@@ -1,11 +1,11 @@
 task: detect
 mode: train
-model: C:\Users\Eray\Documents\GitHub\Enemy-Detection\yolov8s.pt
+model: C:\Users\Eray\Documents\GitHub\Enemy-Detection\yolov8m.pt
 data: models\prepared_dataset\data.yaml
 epochs: 200
 time: null
 patience: 15
-batch: 32
+batch: 16
 imgsz: 960
 save: true
 save_period: -1
