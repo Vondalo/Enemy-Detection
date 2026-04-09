@@ -192,6 +192,26 @@ function getDatasetLabelsDir(datasetPath) {
   return path.join(datasetPath, 'labels');
 }
 
+function summarizeDatasetDirectory(datasetPath) {
+  const imagesDir = getDatasetImagesDir(datasetPath);
+  const labelsDir = getDatasetLabelsDir(datasetPath);
+  const imageCount = fs.existsSync(imagesDir)
+    ? fs.readdirSync(imagesDir).filter((entry) => IMAGE_EXTENSIONS.has(path.extname(entry).toLowerCase())).length
+    : 0;
+  const labelCount = fs.existsSync(labelsDir)
+    ? fs.readdirSync(labelsDir).filter((entry) => path.extname(entry).toLowerCase() === '.txt').length
+    : 0;
+
+  return {
+    imagesDir,
+    labelsDir,
+    imageCount,
+    labelCount,
+    hasImages: imageCount > 0,
+    hasLabels: labelCount > 0,
+  };
+}
+
 function getDatasetLabelPath(datasetPath, filename) {
   return path.join(getDatasetLabelsDir(datasetPath), `${getImageBasename(filename)}.txt`);
 }
@@ -774,10 +794,12 @@ ipcMain.handle('list-datasets', async () => {
                 const csvFiles = files.filter(f => f.endsWith('.csv') || f.endsWith('.csv.backup'));
                 
                 if (csvFiles.length > 0) {
+                    const datasetSummary = summarizeDatasetDirectory(itemPath);
                     results.push({
                         name: item.name,
                         path: itemPath,
-                        csvs: csvFiles
+                        csvs: csvFiles,
+                        ...datasetSummary,
                     });
                 } else {
                     // Check one level deeper (e.g., train/labels.csv)
@@ -789,10 +811,12 @@ ipcMain.handle('list-datasets', async () => {
                         const sdFiles = fs.readdirSync(sdPath);
                         const sdCsvs = sdFiles.filter(f => f.endsWith('.csv') || f.endsWith('.csv.backup'));
                         if (sdCsvs.length > 0) {
+                            const datasetSummary = summarizeDatasetDirectory(sdPath);
                             results.push({
                                 name: `${item.name}/${sd.name}`,
                                 path: sdPath,
-                                csvs: sdCsvs
+                                csvs: sdCsvs,
+                                ...datasetSummary,
                             });
                         }
                     }
@@ -1130,6 +1154,25 @@ ipcMain.handle('run-training', async (event, payload = {}) => {
         const csvPath = path.join(datasetPath, csvName);
         const imgDir = path.join(datasetPath, 'images');
         const normalizedTestSplit = Math.max(1, Math.min(90, Number(testSplit) || 20)) / 100;
+
+        if (!fs.existsSync(csvPath)) {
+            resolve({ error: `Training CSV not found: ${csvPath}` });
+            return;
+        }
+        if (!fs.existsSync(imgDir)) {
+            resolve({
+                error: `This dataset is incomplete: the image folder is missing at ${imgDir}. Rebuild or re-export the dataset so it contains both images/ and labels/ before training.`,
+            });
+            return;
+        }
+
+        const imageCount = fs.readdirSync(imgDir).filter((entry) => IMAGE_EXTENSIONS.has(path.extname(entry).toLowerCase())).length;
+        if (imageCount === 0) {
+            resolve({
+                error: `This dataset is incomplete: ${imgDir} exists but contains no images. Rebuild or re-export the dataset before training.`,
+            });
+            return;
+        }
 
         const trainArgs = [
             trainScript, 

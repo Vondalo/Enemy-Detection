@@ -1,0 +1,23 @@
+{
+  "outputDatasetName": "merged_2026-03-27",
+  "outputCsvName": "labels_merged.csv",
+  "createdAt": "2026-03-27T08:18:45.339Z",
+  "sources": [
+    {
+      "datasetName": "Federico_sammelt",
+      "csvName": "labels_enhanced.csv",
+      "images": 24,
+      "annotations": 86
+    },
+    {
+      "datasetName": "Ich_sammel",
+      "csvName": "labels_enhanced.csv",
+      "images": 50,
+      "annotations": 204
+    }
+  ],
+  "totals": {
+    "images": 74,
+    "annotations": 290
+  }
+}

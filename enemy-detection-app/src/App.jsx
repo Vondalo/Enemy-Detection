@@ -121,6 +121,13 @@ const summarizeDetections = (detections) => {
     return summary;
 };
 
+const ANSI_ESCAPE_PATTERN = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+
+const normalizeLogChunk = (value) => String(value ?? '')
+    .replace(ANSI_ESCAPE_PATTERN, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
+
 const Presentation = () => {
     const [currentSlide, setCurrentSlide] = useState(0);
     const [logs, setLogs] = useState([]);
@@ -162,6 +169,8 @@ const Presentation = () => {
     const [augmentationName, setAugmentationName] = useState('');
     const [collectorSession, setCollectorSession] = useState(null);
     const isCollectorWorkspaceActive = currentSlide === 1 && Boolean(collectorSession);
+    const trainingLogsRef = useRef(null);
+    const selectedDatasetTrainable = Boolean(selectedDataset?.hasImages);
 
     const appendLog = (...entries) => {
         const nextEntries = entries.flat().filter(Boolean);
@@ -191,8 +200,9 @@ const Presentation = () => {
             return next;
         });
         if (data.length > 0 && !selectedDataset) {
-            setSelectedDataset(data[0]);
-            setSelectedCsv(data[0].csvs[0]);
+            const preferredDataset = data.find((dataset) => dataset.hasImages) || data[0];
+            setSelectedDataset(preferredDataset);
+            setSelectedCsv(preferredDataset.csvs[0]);
         }
     };
 
@@ -209,7 +219,9 @@ const Presentation = () => {
     useEffect(() => {
         if (window.electronAPI?.onPipelineOutput) {
             window.electronAPI.onPipelineOutput((data) => {
-                setLogs(prev => [...prev, data.msg]);
+                const message = normalizeLogChunk(data.msg);
+                if (!message) return;
+                setLogs(prev => [...prev, message]);
             });
         }
         handleFetchDatasets();
@@ -468,6 +480,7 @@ const Presentation = () => {
 
     const handleTrainOnDataset = async () => {
         if (!selectedDataset || !selectedCsv) return;
+        trainingLogsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         setIsRunning(true);
         setTrainingSummary(null);
         setTestReviewManifest(null);
@@ -509,14 +522,24 @@ const Presentation = () => {
         setIsRunning(false);
     };
 
-    const renderTerminal = (compact = false) => (
-        <div className={`bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-2xl flex flex-col font-mono text-sm ${compact ? 'mt-4 h-40 max-h-40' : 'mt-6 h-64 max-h-96'}`}>
+    const renderTerminal = (compact = false, options = {}) => {
+        const {
+            title = 'TERMINAL',
+            emptyMessage = 'No output yet. Run a process to see logs here.',
+            containerRef = null,
+        } = options;
+
+        return (
+        <div
+            ref={containerRef}
+            className={`bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-2xl flex flex-col font-mono text-sm ${compact ? 'mt-4 h-40 max-h-40' : 'mt-6 h-64 max-h-96'}`}
+        >
             <div className="bg-slate-900 border-b border-slate-800 px-4 py-2 flex items-center justify-between">
                 <div className="flex gap-2.5 items-center">
                     <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
                     <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
                     <div className="w-3 h-3 rounded-full bg-amber-500/80"></div>
-                    <span className="ml-2 text-slate-500 text-xs tracking-wider">TERMINAL</span>
+                    <span className="ml-2 text-slate-500 text-xs tracking-wider">{title}</span>
                 </div>
                 {isRunning && (
                     <div className="flex items-center gap-4">
@@ -530,7 +553,7 @@ const Presentation = () => {
             </div>
             <div className="p-4 overflow-y-auto flex-1 text-slate-300 leading-relaxed break-all whitespace-pre-wrap">
                 {logs.length === 0 ? (
-                    <span className="text-slate-600 italic">No output yet. Run a process to see logs here.</span>
+                    <span className="text-slate-600 italic">{emptyMessage}</span>
                 ) : (
                     logs.map((log, i) => (
                         <div key={i}>{log}</div>
@@ -539,7 +562,8 @@ const Presentation = () => {
                 <div ref={logsEndRef} />
             </div>
         </div>
-    );
+        );
+    };
 
     const slides = [
         {
@@ -990,7 +1014,11 @@ const Presentation = () => {
                                         }}
                                     >
                                         {datasets.length === 0 && <option value="">No datasets found</option>}
-                                        {datasets.map(ds => <option key={ds.name} value={ds.name}>{ds.name}</option>)}
+                                        {datasets.map(ds => (
+                                            <option key={ds.name} value={ds.name}>
+                                                {ds.name}{ds.hasImages ? '' : ' (missing images)'}
+                                            </option>
+                                        ))}
                                     </select>
                                 </div>
                                 <div className="flex flex-col gap-2">
@@ -1109,18 +1137,34 @@ const Presentation = () => {
                             That avoids leaking the same cleaned images into both train and validation, while making CUDA usage explicit instead of hidden.
                         </div>
 
+                        <div className="bg-emerald-950/30 border border-emerald-700/40 rounded-xl p-4 text-sm text-emerald-100 leading-relaxed">
+                            No separate system terminal is required here. Press <span className="font-bold text-white">Start Training</span> and the app will stream Python output into the training log panel below.
+                        </div>
+
+                        {!selectedDatasetTrainable && selectedDataset && (
+                            <div className="bg-rose-950/40 border border-rose-700/40 rounded-xl p-4 text-sm text-rose-100 leading-relaxed">
+                                This dataset is not trainable yet because its <span className="font-bold text-white">images</span> folder is missing or empty.
+                                The app found {selectedDataset.imageCount ?? 0} image files and {selectedDataset.labelCount ?? 0} label files in this dataset.
+                            </div>
+                        )}
+
                         <button 
                             onClick={handleTrainOnDataset}
-                            disabled={isRunning || !selectedDataset}
+                            disabled={isRunning || !selectedDataset || !selectedDatasetTrainable}
                             className="px-6 py-3 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-rose-900/20 text-sm font-bold w-full flex justify-center items-center gap-2"
                         >Start Training <BrainCircuit size={18}/></button>
+
+                        {renderTerminal(false, {
+                            title: 'TRAINING LOGS',
+                            emptyMessage: 'Training logs will appear here after you press Start Training.',
+                            containerRef: trainingLogsRef,
+                        })}
 
                         <TrainingReviewPanel
                             summary={trainingSummary}
                             reviewManifest={testReviewManifest}
                         />
                     </div>
-                    {renderTerminal()}
                 </div>
             )
         },

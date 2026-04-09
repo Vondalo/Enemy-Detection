@@ -105,7 +105,7 @@
                         </div>
                         <div className="space-y-4">
                             <h1 className="text-5xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-rose-400 via-red-400 to-orange-300">
-                                NACH DEM SPRINT
+                                ABSCHLUSSPRÄSENTATION
                             </h1>
                             <p className="text-xl text-slate-400 max-w-2xl mx-auto">
                                 Von einer einfachen Koordinaten-Regression zu einem hybriden lokalen Workflow für Datensatzerstellung, YOLO-Training, Annotation, Zusammenführen und Testen.
@@ -151,6 +151,153 @@
                                 </div>
                                 <p className="text-slate-400 max-w-md mx-auto">Das Projekt wurde angepasst, weil die ursprüngliche Formulierung das echte Erkennungsproblem nicht zuverlässig abbilden konnte.</p>
                             </div>
+                        </div>
+                    </div>
+                )
+            },
+            {
+                id: 'roadmap',
+                title: 'Roadmap',
+                subtitle: 'Wie sich unser Ansatz chronologisch verändert hat',
+                icon: <Layers size={24} />,
+                content: (
+                    <div className="flex flex-col h-full gap-6">
+                        <div className="bg-slate-900/60 border border-slate-700 rounded-xl p-4">
+                            <div className="flex flex-col md:flex-row md:items-center gap-4">
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <div className="w-11 h-11 rounded-full bg-rose-500/15 border border-rose-400/30 flex items-center justify-center font-bold text-rose-300">1</div>
+                                    <div>
+                                        <p className="text-[11px] uppercase tracking-[0.25em] text-slate-500 font-mono">Früher</p>
+                                        <p className="font-bold text-white">Lineare / Koordinaten-Regression</p>
+                                    </div>
+                                </div>
+                                <div className="flex-1 h-px bg-gradient-to-r from-rose-500/60 via-orange-400/60 to-transparent" />
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <div className="w-11 h-11 rounded-full bg-orange-500/15 border border-orange-400/30 flex items-center justify-center font-bold text-orange-200">2</div>
+                                    <div>
+                                        <p className="text-[11px] uppercase tracking-[0.25em] text-slate-500 font-mono">Heute</p>
+                                        <p className="font-bold text-white">YOLO Object Detection</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                            <div className={card + " border-t-4 border-rose-500"}>
+                                <div className="flex items-center justify-between gap-3 mb-4">
+                                    <div>
+                                        <p className="text-xs uppercase tracking-widest text-rose-300 font-mono">Phase 1</p>
+                                        <h3 className="text-2xl font-bold text-white">Erster Ansatz: Ein Punkt pro Bild</h3>
+                                    </div>
+                                    <span className="px-3 py-1 rounded-full bg-rose-500/10 text-rose-200 text-xs font-semibold">Linear</span>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-[0.78fr_1.22fr] gap-4 items-center">
+                                    <div className="space-y-3">
+                                        <p className="text-sm leading-relaxed text-slate-300">
+                                            Wir starteten bewusst simpel: Das Modell sollte nur einen <span className="text-rose-300 font-semibold">(x, y)</span>-Punkt für die Gegnerposition vorhersagen.
+                                        </p>
+
+                                        <div className="bg-slate-900/70 border border-slate-700 rounded-lg p-3">
+                                            <div className="text-[11px] uppercase tracking-wider text-slate-500 font-mono mb-1">Warum wir so gestartet sind</div>
+                                            <p className="text-sm text-slate-300">Ein Punkt wirkte zuerst leicht zu labeln und direkt als Zielwert trainierbar.</p>
+                                        </div>
+
+                                        <div className="bg-slate-900/70 border border-slate-700 rounded-lg p-3">
+                                            <div className="text-[11px] uppercase tracking-wider text-slate-500 font-mono mb-1">Ergebnis</div>
+                                            <p className="text-sm text-slate-300">Das Modell sagte oft nur einen Mittelwert voraus und war bei mehreren Zielen nicht robust genug.</p>
+                                        </div>
+
+                                        <div className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-3">
+                                            <div className="text-[11px] uppercase tracking-wider text-rose-300 font-mono mb-1">Erkenntnis</div>
+                                            <p className="text-sm text-rose-100">Ein einzelner Punkt beschreibt das Problem zu grob und bildet echte Gegnererkennung nicht sauber ab.</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        <div className="relative aspect-[16/10] overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
+                                            <img
+                                                src="./docs/presentation-assets/roadmap-linear.png"
+                                                alt="Linearer Ansatz mit Punktvorhersage"
+                                                className="h-full w-full object-contain p-2"
+                                            />
+                                            <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent" />
+                                            <div className="absolute left-3 right-3 bottom-3 rounded-lg bg-slate-950/85 border border-slate-700 px-3 py-2">
+                                                <p className="text-[11px] uppercase tracking-wider text-rose-300 font-mono">Linear Example</p>
+                                                <p className="text-sm text-slate-200">Deutlicher Center-Bias statt echter Erkennung</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex flex-wrap gap-2">
+                                            <span className="px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs text-slate-300">Durchschnittspunkt</span>
+                                            <span className="px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs text-slate-300">Mehrdeutige Ziele</span>
+                                            <span className="px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs text-slate-300">Nicht robust</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className={card + " border-t-4 border-orange-500"}>
+                                <div className="flex items-center justify-between gap-3 mb-4">
+                                    <div>
+                                        <p className="text-xs uppercase tracking-widest text-orange-300 font-mono">Phase 2</p>
+                                        <h3 className="text-2xl font-bold text-white">Zweiter Ansatz: Unser YOLO-Modell</h3>
+                                    </div>
+                                    <span className="px-3 py-1 rounded-full bg-orange-500/10 text-orange-200 text-xs font-semibold">YOLO</span>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-[0.78fr_1.22fr] gap-4 items-center">
+                                    <div className="space-y-3">
+                                        <p className="text-sm leading-relaxed text-slate-300">
+                                            Danach wechselten wir zu YOLO, weil unser Problem eigentlich <span className="text-orange-300 font-semibold">Objekterkennung</span> ist und nicht nur die Schätzung eines einzelnen Punkts.
+                                        </p>
+
+                                        <div className="bg-slate-900/70 border border-slate-700 rounded-lg p-3">
+                                            <div className="text-[11px] uppercase tracking-wider text-slate-500 font-mono mb-1">Warum YOLO besser passt</div>
+                                            <p className="text-sm text-slate-300">Bounding Boxes statt nur ein Punkt, mehrere Objekte pro Bild und visuell sinnvollere Vorhersagen.</p>
+                                        </div>
+
+                                        <div className="bg-slate-900/70 border border-slate-700 rounded-lg p-3">
+                                            <div className="flex items-center justify-between gap-3 mb-1">
+                                                <div className="text-[11px] uppercase tracking-wider text-slate-500 font-mono">Aktuelle Schwäche</div>
+                                                <span className="text-xs font-mono text-orange-300">Recall ~ 0.54</span>
+                                            </div>
+                                            <p className="text-sm text-slate-300">Das Modell ist klar besser, übersieht aktuell aber noch zu viele Gegner.</p>
+                                        </div>
+
+                                        <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-3">
+                                            <div className="text-[11px] uppercase tracking-wider text-orange-300 font-mono mb-1">Erkenntnis</div>
+                                            <p className="text-sm text-orange-100">Die neue Problemformulierung ist der richtige Schritt. Jetzt liegt der Fokus auf mehr Recall.</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        <div className="relative aspect-[16/10] overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
+                                            <img
+                                                src="./docs/presentation-assets/roadmap-yolo-single.jpg"
+                                                alt="YOLO-Beispiel mit Bounding Boxes"
+                                                className="h-full w-full object-contain p-2"
+                                            />
+                                            <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/15 to-transparent" />
+                                            <div className="absolute left-3 right-3 bottom-3 rounded-lg bg-slate-950/85 border border-slate-700 px-3 py-2">
+                                                <p className="text-[11px] uppercase tracking-wider text-orange-300 font-mono">YOLO Example</p>
+                                                <p className="text-sm text-slate-200">Bounding Boxes machen die Vorhersage direkt sichtbar</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex flex-wrap gap-2">
+                                            <span className="px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs text-slate-300">Bounding Boxes</span>
+                                            <span className="px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs text-slate-300">Mehrere Objekte</span>
+                                            <span className="px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs text-slate-300">Recall noch zu niedrig</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="rounded-xl border border-slate-700 bg-gradient-to-r from-rose-500/10 via-slate-950/80 to-orange-500/10 p-4">
+                            <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 font-mono mb-2">Roadmap-Fazit</p>
+                            <p className="text-lg font-semibold text-white">Der echte Fortschritt war nicht nur ein neues Modell, sondern die Umstellung von einem Punkt zu echter Objekterkennung.</p>
                         </div>
                     </div>
                 )
@@ -473,7 +620,7 @@
             {
                 id: 'lessons',
                 title: 'Erkenntnisse',
-                subtitle: 'Was uns der Sprint gezeigt hat',
+                subtitle: 'Was wir aus dem Projekt gelernt haben',
                 icon: <CheckCircle size={24} />,
                 content: (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-full items-center">
@@ -555,39 +702,38 @@
                         />
                     </div>
 
-                    <div className="flex-1 flex flex-col md:flex-row max-w-7xl mx-auto w-full p-4 md:p-8 gap-6">
-                        <div className="hidden md:flex flex-col w-72 space-y-2 pr-4 border-r border-slate-800/50">
-                            {slides.map((slide, index) => (
-                                <button
-                                    key={slide.id}
-                                    onClick={() => setCurrentSlide(index)}
-                                    className={`text-left px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                                        currentSlide === index
-                                            ? 'bg-rose-500/10 text-rose-300 border border-rose-500/20'
-                                            : 'text-slate-500 hover:bg-slate-900 hover:text-slate-300 border border-transparent'
-                                    }`}
-                                >
-                                    <span className={`w-2 h-2 rounded-full ${currentSlide === index ? 'bg-rose-400' : 'bg-slate-700'}`} />
-                                    {slide.title}
-                                </button>
-                            ))}
-                        </div>
+                    <div className="flex-1 w-full max-w-[1680px] mx-auto px-4 py-4 md:px-6 md:py-5 lg:px-8">
+                        <div className="flex h-full min-h-0 flex-col relative bg-slate-950/55 rounded-[28px] border border-slate-800/60 shadow-2xl overflow-hidden">
+                            <div className="px-8 pt-8 pb-5 md:px-12 md:pt-10 md:pb-6 animate-fade-in-down border-b border-slate-800/60">
+                                <div className="flex items-start justify-between gap-6">
+                                    <div>
+                                        <div className="flex items-center gap-3 text-rose-400 mb-2">
+                                            {slides[currentSlide].icon}
+                                            <span className="text-xs font-mono uppercase tracking-widest opacity-75">Folie {currentSlide + 1}</span>
+                                        </div>
+                                        <h2 className="text-3xl md:text-4xl font-bold text-white">{slides[currentSlide].title}</h2>
+                                        <p className="text-slate-400 mt-2 text-base md:text-lg">{slides[currentSlide].subtitle}</p>
+                                    </div>
 
-                        <div className="flex-1 flex flex-col relative bg-slate-950/50 rounded-2xl md:border border-slate-800/50 shadow-2xl overflow-hidden">
-                            <div className="p-8 pb-0 animate-fade-in-down border-b border-transparent">
-                                <div className="flex items-center gap-3 text-rose-400 mb-2">
-                                    {slides[currentSlide].icon}
-                                    <span className="text-xs font-mono uppercase tracking-widest opacity-75">Folie {currentSlide + 1}</span>
+                                    <div className="hidden md:flex items-center gap-3 rounded-full border border-slate-700 bg-slate-900/70 px-4 py-2 text-xs font-mono text-slate-400 whitespace-nowrap">
+                                        <span>{currentSlide + 1} / {slides.length}</span>
+                                        <span className="w-1.5 h-1.5 rounded-full bg-slate-700" />
+                                        <span className="text-slate-300">{slides[currentSlide].title}</span>
+                                    </div>
                                 </div>
-                                <h2 className="text-3xl font-bold text-white">{slides[currentSlide].title}</h2>
-                                <p className="text-slate-400 mt-1">{slides[currentSlide].subtitle}</p>
                             </div>
 
-                            <div className="flex-1 p-8 overflow-y-auto">
+                            <div className="flex-1 min-h-0 px-8 py-8 md:px-12 md:py-10 overflow-y-auto">
                                 <div className="h-full animate-fade-in">{slides[currentSlide].content}</div>
                             </div>
 
-                            <div className="p-6 flex items-center justify-between md:justify-end gap-4 border-t border-slate-800/50 bg-slate-900/20">
+                            <div className="px-8 py-5 md:px-12 md:py-6 flex items-center justify-between gap-4 border-t border-slate-800/60 bg-slate-900/25">
+                                <div className="hidden md:flex items-center gap-3 text-xs font-mono text-slate-500">
+                                    <span>16:9 optimized</span>
+                                    <span className="w-1 h-1 rounded-full bg-slate-700" />
+                                    <span>Pfeiltasten oder Buttons zum Wechseln</span>
+                                </div>
+
                                 <span className="md:hidden text-xs font-mono text-slate-500">{currentSlide + 1} / {slides.length}</span>
                                 <div className="flex gap-2">
                                     <button

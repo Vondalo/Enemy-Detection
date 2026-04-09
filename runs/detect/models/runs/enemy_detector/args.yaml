@@ -1,6 +1,6 @@
 task: detect
 mode: train
-model: C:\Users\Eray\Documents\GitHub\Enemy-Detection\yolov8s.pt
+model: C:\Users\richi\Enemy-Dectection\yolov8s.pt
 data: models\prepared_dataset\data.yaml
 epochs: 80
 time: null
@@ -106,4 +106,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: botsort.yaml
-save_dir: C:\Users\Eray\Documents\GitHub\Enemy-Detection\runs\detect\models\runs\enemy_detector
+save_dir: C:\Users\richi\Enemy-Dectection\runs\detect\models\runs\enemy_detector
