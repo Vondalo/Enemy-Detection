@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight, BarChart3, CheckCircle2, Image as ImageIcon, Search } from 'lucide-react';
 
 const toFileUrl = (filePath) => {
@@ -10,6 +10,13 @@ const toFileUrl = (filePath) => {
 const formatMetric = (value) => {
     if (typeof value !== 'number' || Number.isNaN(value)) return 'n/a';
     return `${(value * 100).toFixed(1)}%`;
+};
+
+const formatDateTime = (value) => {
+    if (!value) return 'n/a';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return 'n/a';
+    return parsed.toLocaleString();
 };
 
 const formatBox = (item) => (
@@ -37,11 +44,19 @@ export default function TrainingReviewPanel({ summary, reviewManifest }) {
     const entries = Array.isArray(reviewManifest?.entries) ? reviewManifest.entries : [];
     const safeIndex = entries.length ? Math.min(currentIndex, entries.length - 1) : 0;
     const currentEntry = entries[safeIndex] || null;
+    const modelBasis = summary?.model_choice || summary?.chosen_model || 'n/a';
+    const reviewThreshold = summary?.evaluation?.confidence_threshold;
+    const datasetName = summary?.training_source?.dataset_name || 'n/a';
+    const csvName = summary?.training_source?.csv_name || 'n/a';
+
+    useEffect(() => {
+        setCurrentIndex(0);
+    }, [summary?.run_id, reviewManifest?.summary?.images, reviewManifest?.entries?.length]);
 
     if (!summary) {
         return (
             <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-400">
-                Train a model to populate held-out metrics and review images here.
+                Train a model or load one from the saved model history to populate held-out metrics and review images here.
             </div>
         );
     }
@@ -78,6 +93,19 @@ export default function TrainingReviewPanel({ summary, reviewManifest }) {
                     </div>
                 </div>
 
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
+                    <div className="rounded-xl border border-slate-700 bg-slate-950/70 p-4 text-sm text-slate-300">
+                        <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-500">Run</div>
+                        <div className="mt-2 text-white font-semibold">{formatDateTime(summary?.created_at)}</div>
+                        <div className="mt-1 text-slate-400 break-all">{modelBasis}</div>
+                    </div>
+                    <div className="rounded-xl border border-slate-700 bg-slate-950/70 p-4 text-sm text-slate-300">
+                        <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-500">Training Source</div>
+                        <div className="mt-2 text-white font-semibold">{datasetName}</div>
+                        <div className="mt-1 text-slate-400">{csvName}</div>
+                    </div>
+                </div>
+
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mt-3">
                     <div className="rounded-xl border border-slate-700 bg-slate-950/70 p-4">
                         <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-500">Train Images</div>
@@ -105,6 +133,11 @@ export default function TrainingReviewPanel({ summary, reviewManifest }) {
                     <div>
                         Requested test split: <span className="font-semibold text-white">
                             {typeof summary.dataset?.test_split === 'number' ? `${(summary.dataset.test_split * 100).toFixed(0)}%` : 'external holdout'}
+                        </span>
+                    </div>
+                    <div className="mt-1">
+                        Saved review confidence threshold: <span className="font-semibold text-white">
+                            {typeof reviewThreshold === 'number' ? `${(reviewThreshold * 100).toFixed(0)}%` : 'n/a'}
                         </span>
                     </div>
                     <div className="mt-1">

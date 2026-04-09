@@ -1,0 +1,23 @@
+{
+  "outputDatasetName": "final_merged_with_party_girl_LATEST_5_04_26",
+  "outputCsvName": "labels_merged.csv",
+  "createdAt": "2026-04-05T12:19:29.474Z",
+  "sources": [
+    {
+      "datasetName": "final_merged",
+      "csvName": "labels_merged.csv",
+      "images": 74,
+      "annotations": 290
+    },
+    {
+      "datasetName": "party_girl_augmented",
+      "csvName": "augmented_labels.csv",
+      "images": 219,
+      "annotations": 332
+    }
+  ],
+  "totals": {
+    "images": 293,
+    "annotations": 622
+  }
+}
