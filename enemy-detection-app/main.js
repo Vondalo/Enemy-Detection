@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, screen, shell } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
@@ -14,6 +14,8 @@ let currentProcess = null;
 let videoPredictionProcess = null;
 let videoPredictionSessionId = null;
 let videoPredictionStopRequested = false;
+let videoPredictionStopFilePath = null;
+let videoPredictionStopTimeout = null;
 const collectionSessions = new Map();
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.bmp', '.webp']);
 const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'webm', 'mkv'];
@@ -39,9 +41,39 @@ function sendVideoPredictionEvent(payload) {
 }
 
 function cleanupVideoPredictionState() {
+  if (videoPredictionStopTimeout) {
+    clearTimeout(videoPredictionStopTimeout);
+    videoPredictionStopTimeout = null;
+  }
+  if (videoPredictionStopFilePath && fs.existsSync(videoPredictionStopFilePath)) {
+    try {
+      fs.unlinkSync(videoPredictionStopFilePath);
+    } catch {
+      // Ignore stop-file cleanup errors after the child has exited.
+    }
+  }
   videoPredictionProcess = null;
   videoPredictionSessionId = null;
   videoPredictionStopRequested = false;
+  videoPredictionStopFilePath = null;
+}
+
+function sanitizeFileStem(value, fallback = 'video') {
+  const normalized = String(value || '')
+    .replace(/[^a-z0-9._-]+/gi, '_')
+    .replace(/^_+|_+$/g, '');
+  return normalized || fallback;
+}
+
+function buildVideoPredictionOutputPath(videoPath) {
+  const downloadsPath = app.getPath('downloads');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const sourceName = sanitizeFileStem(path.parse(videoPath).name, 'video');
+  return path.join(downloadsPath, `${sourceName}_detections_${timestamp}.mp4`);
+}
+
+function buildVideoPredictionStopFilePath(projectRoot, sessionId) {
+  return path.join(projectRoot, 'tmp', `video_prediction_stop_${sanitizeFileStem(sessionId, 'session')}.flag`);
 }
 
 function parseCsvLine(line) {
@@ -1199,6 +1231,24 @@ ipcMain.handle('select-video', async () => {
   return filePaths[0];
 });
 
+ipcMain.handle('reveal-path', async (event, targetPath) => {
+  try {
+    const rawPath = String(targetPath || '').trim();
+    if (!rawPath) {
+      return { error: 'A file path is required.' };
+    }
+    const resolvedPath = path.resolve(rawPath);
+    if (!fs.existsSync(resolvedPath)) {
+      return { error: `File not found: ${resolvedPath}` };
+    }
+
+    shell.showItemInFolder(resolvedPath);
+    return { success: true, path: resolvedPath };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
 ipcMain.handle('run-prediction', async (event, imagePath) => {
   return new Promise((resolve, reject) => {
     const projectRoot = path.join(__dirname, '..');
@@ -1257,6 +1307,7 @@ ipcMain.handle('start-video-prediction', async (event, payload = {}) => {
     const scriptPath = path.join(projectRoot, 'src', 'predict_video_cli.py');
     const videoPath = String(payload.videoPath || '').trim();
     const mode = String(payload.mode || 'precompute').trim().toLowerCase();
+    const saveOutput = payload.saveOutput !== false;
     const activeModel = resolveActiveModel(projectRoot);
 
     if (!videoPath) {
@@ -1281,7 +1332,17 @@ ipcMain.handle('start-video-prediction', async (event, payload = {}) => {
     }
 
     const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const pythonArgs = [scriptPath, videoPath, '--mode', mode];
+    const stopFilePath = buildVideoPredictionStopFilePath(projectRoot, sessionId);
+    const outputPath = saveOutput ? buildVideoPredictionOutputPath(videoPath) : null;
+    fs.mkdirSync(path.dirname(stopFilePath), { recursive: true });
+    if (fs.existsSync(stopFilePath)) {
+      fs.unlinkSync(stopFilePath);
+    }
+
+    const pythonArgs = [scriptPath, videoPath, '--mode', mode, '--stop_file', stopFilePath];
+    if (outputPath) {
+      pythonArgs.push('--save_path', outputPath);
+    }
     if (activeModel?.weightsPath) {
       pythonArgs.push('--model', activeModel.weightsPath);
     }
@@ -1294,10 +1355,12 @@ ipcMain.handle('start-video-prediction', async (event, payload = {}) => {
     videoPredictionProcess = child;
     videoPredictionSessionId = sessionId;
     videoPredictionStopRequested = false;
+    videoPredictionStopFilePath = stopFilePath;
 
     let resolved = false;
     let stdoutBuffer = '';
     let lastLoggedProcessed = 0;
+    let sawStoppedEvent = false;
 
     const resolveOnce = (value) => {
       if (!resolved) {
@@ -1315,6 +1378,12 @@ ipcMain.handle('start-video-prediction', async (event, payload = {}) => {
           'stdout',
           `[Video] Started ${path.basename(String(eventPayload.video_path || videoPath))} | ${Number(eventPayload.frame_count || 0)} frame(s) @ ${Number(eventPayload.fps || 0).toFixed(2)} FPS on ${eventPayload.device_name || eventPayload.device || 'unknown'}\n`,
         );
+        if (eventPayload.saved_video_path) {
+          sendPipelineOutput('stdout', `[Video] Annotated output target: ${eventPayload.saved_video_path}\n`);
+        }
+        if (eventPayload.save_error) {
+          sendPipelineOutput('stderr', `[Video][Save] ${eventPayload.save_error}\n`);
+        }
       } else if (eventPayload.type === 'progress') {
         const processed = Number(eventPayload.processed_frames || 0);
         const total = Number(eventPayload.total_frames || 0);
@@ -1322,8 +1391,23 @@ ipcMain.handle('start-video-prediction', async (event, payload = {}) => {
           lastLoggedProcessed = processed;
           sendPipelineOutput('stdout', `[Video] Processed ${processed}/${total || '?'} frames.\n`);
         }
+      } else if (eventPayload.type === 'stopped') {
+        sawStoppedEvent = true;
+        sendPipelineOutput('stdout', `[Video] Prediction session stopped after ${Number(eventPayload.processed_frames || 0)} frame(s).\n`);
+        if (eventPayload.saved_video_path && !eventPayload.save_error) {
+          sendPipelineOutput('stdout', `[Video] Partial annotated video saved to ${eventPayload.saved_video_path}\n`);
+        }
+        if (eventPayload.save_error) {
+          sendPipelineOutput('stderr', `[Video][Save] ${eventPayload.save_error}\n`);
+        }
       } else if (eventPayload.type === 'complete') {
         sendPipelineOutput('stdout', `[Video] Prediction complete. Processed ${Number(eventPayload.processed_frames || 0)} frame(s).\n`);
+        if (eventPayload.saved_video_path && !eventPayload.save_error) {
+          sendPipelineOutput('stdout', `[Video] Annotated video saved to ${eventPayload.saved_video_path}\n`);
+        }
+        if (eventPayload.save_error) {
+          sendPipelineOutput('stderr', `[Video][Save] ${eventPayload.save_error}\n`);
+        }
       } else if (eventPayload.type === 'error') {
         sendPipelineOutput('stderr', `[Video][Error] ${eventPayload.message || 'Unknown video prediction error.'}\n`);
       }
@@ -1369,8 +1453,10 @@ ipcMain.handle('start-video-prediction', async (event, payload = {}) => {
       const stoppedByUser = videoPredictionStopRequested;
 
       if (stoppedByUser) {
-        sendVideoPredictionEvent({ type: 'stopped', session_id: closingSessionId });
-        sendPipelineOutput('stdout', '[Video] Prediction session stopped.\n');
+        if (!sawStoppedEvent) {
+          sendVideoPredictionEvent({ type: 'stopped', session_id: closingSessionId });
+          sendPipelineOutput('stdout', '[Video] Prediction session stopped.\n');
+        }
       } else if (code !== 0) {
         const message = `Video prediction failed with code ${code}`;
         sendVideoPredictionEvent({ type: 'error', session_id: closingSessionId, message });
@@ -1390,7 +1476,24 @@ ipcMain.handle('stop-video-prediction', async () => {
   }
 
   videoPredictionStopRequested = true;
-  spawn('taskkill', ['/pid', String(videoPredictionProcess.pid), '/f', '/t']);
+  const activePid = videoPredictionProcess.pid;
+  if (videoPredictionStopFilePath) {
+    try {
+      fs.writeFileSync(videoPredictionStopFilePath, 'stop', 'utf-8');
+      if (videoPredictionStopTimeout) {
+        clearTimeout(videoPredictionStopTimeout);
+      }
+      videoPredictionStopTimeout = setTimeout(() => {
+        if (videoPredictionProcess && videoPredictionProcess.pid === activePid) {
+          spawn('taskkill', ['/pid', String(activePid), '/f', '/t']);
+        }
+      }, 5000);
+    } catch {
+      spawn('taskkill', ['/pid', String(activePid), '/f', '/t']);
+    }
+  } else {
+    spawn('taskkill', ['/pid', String(activePid), '/f', '/t']);
+  }
   return { success: true };
 });
 

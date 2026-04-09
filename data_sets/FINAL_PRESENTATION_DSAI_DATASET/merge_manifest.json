@@ -1,0 +1,23 @@
+{
+  "outputDatasetName": "FINAL_PRESENTATION_DSAI_DATASET",
+  "outputCsvName": "labels_merged.csv",
+  "createdAt": "2026-04-09T16:59:52.397Z",
+  "sources": [
+    {
+      "datasetName": "ka alter",
+      "csvName": "augmented_labels.csv",
+      "images": 1181,
+      "annotations": 2386
+    },
+    {
+      "datasetName": "merged_9.04_augmented",
+      "csvName": "augmented_labels.csv",
+      "images": 2743,
+      "annotations": 3349
+    }
+  ],
+  "totals": {
+    "images": 3924,
+    "annotations": 5735
+  }
+}

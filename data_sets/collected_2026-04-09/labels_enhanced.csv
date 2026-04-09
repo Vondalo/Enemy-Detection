@@ -1,0 +1,3 @@
+filename,class_id,class_name,has_enemy,x_center,y_center,width,height,video_id,frame_idx,timestamp,confidence,auto_labeled,bbox_source,aug_type
+Fortnite_Reload_60_Kill_Solo_Ranked_Win_Full_Gameplay_Keyboard_Mouse [lyCRqnLXE_M]_021915.png,1,player,1,0.406110,0.700157,0.130651,0.412247,Fortnite_Reload_60_Kill_Solo_Ranked_Win_Full_Gameplay_Keyboard_Mouse [lyCRqnLXE_M],21915,730.500000,1.0000,False,manual_box,
+Fortnite_Reload_60_Kill_Solo_Ranked_Win_Full_Gameplay_Keyboard_Mouse [lyCRqnLXE_M]_021915.png,0,enemy,1,0.501242,0.498454,0.035768,0.106101,Fortnite_Reload_60_Kill_Solo_Ranked_Win_Full_Gameplay_Keyboard_Mouse [lyCRqnLXE_M],21915,730.500000,1.0000,False,manual_box,

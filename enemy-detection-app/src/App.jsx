@@ -1293,6 +1293,12 @@ const Presentation = () => {
                             className="px-6 py-3 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition text-white shadow-lg shadow-rose-900/20 text-sm font-bold w-full flex justify-center items-center gap-2"
                         >Start Training <BrainCircuit size={18}/></button>
 
+                        {renderTerminal(false, {
+                            title: 'TRAINING LOGS',
+                            emptyMessage: 'Start training to stream Python, CUDA, and Ultralytics output here.',
+                            containerRef: trainingLogsRef,
+                        })}
+
                         <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5">
                             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
                                 <div className="flex items-center gap-2 text-slate-200">

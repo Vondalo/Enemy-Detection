@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   selectImage: () => ipcRenderer.invoke('select-image'),
   selectVideo: () => ipcRenderer.invoke('select-video'),
+  revealPath: (targetPath) => ipcRenderer.invoke('reveal-path', targetPath),
   runPrediction: (imagePath) => ipcRenderer.invoke('run-prediction', imagePath),
   startVideoPrediction: (payload) => ipcRenderer.invoke('start-video-prediction', payload),
   stopVideoPrediction: () => ipcRenderer.invoke('stop-video-prediction'),

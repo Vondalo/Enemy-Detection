@@ -64,6 +64,153 @@ def _resolve_names(result) -> dict[int, str]:
     return {}
 
 
+def _color_for_class(class_key: str) -> tuple[int, int, int]:
+    if class_key == "player":
+        return (36, 191, 251)
+    if class_key == "enemy":
+        return (94, 63, 244)
+    return (148, 163, 184)
+
+
+def _render_annotated_frame(frame, detections):
+    rendered = frame.copy()
+    image_height, image_width = rendered.shape[:2]
+
+    for detection in detections:
+        x1, y1, x2, y2 = [int(round(value)) for value in detection["bbox_xyxy"]]
+        x1 = max(0, min(image_width - 1, x1))
+        y1 = max(0, min(image_height - 1, y1))
+        x2 = max(0, min(image_width - 1, x2))
+        y2 = max(0, min(image_height - 1, y2))
+
+        color = _color_for_class(str(detection.get("class_key", "unknown")))
+        label = f'{detection.get("class_name", "Unknown")} {float(detection.get("confidence", 0.0)) * 100:.0f}%'
+
+        cv2.rectangle(rendered, (x1, y1), (x2, y2), color, 2)
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.55
+        thickness = 1
+        (text_width, text_height), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+        label_left = max(0, min(x1, image_width - text_width - 10))
+        label_top = max(0, y1 - text_height - baseline - 8)
+        label_right = min(image_width - 1, label_left + text_width + 10)
+        label_bottom = min(image_height - 1, label_top + text_height + baseline + 6)
+        text_y = max(text_height, label_bottom - baseline - 3)
+
+        cv2.rectangle(rendered, (label_left, label_top), (label_right, label_bottom), color, -1)
+        cv2.putText(
+            rendered,
+            label,
+            (label_left + 5, text_y),
+            font,
+            font_scale,
+            (255, 255, 255),
+            thickness,
+            cv2.LINE_AA,
+        )
+
+    return rendered
+
+
+def _normalize_frame_size(frame_size: tuple[int, int]) -> tuple[int, int]:
+    width, height = [int(value) for value in frame_size]
+    if width <= 0 or height <= 0:
+        raise RuntimeError(f"Invalid video frame size {width}x{height}.")
+
+    # Some OpenCV/codec combinations refuse odd dimensions for encoded output.
+    if width % 2 != 0 and width > 1:
+        width -= 1
+    if height % 2 != 0 and height > 1:
+        height -= 1
+
+    return width, height
+
+
+def _iter_video_writer_targets(save_path: Path):
+    seen: set[tuple[str, str]] = set()
+
+    def _add(candidate_path: Path, codec: str):
+        key = (str(candidate_path), codec)
+        if key not in seen:
+            seen.add(key)
+            yield candidate_path, codec
+
+    if save_path.suffix.lower() != ".mp4":
+        yield from _add(save_path.with_suffix(".mp4"), "mp4v")
+        yield from _add(save_path.with_suffix(".mp4"), "avc1")
+        yield from _add(save_path.with_suffix(".avi"), "XVID")
+        yield from _add(save_path.with_suffix(".avi"), "MJPG")
+        return
+
+    yield from _add(save_path, "mp4v")
+    yield from _add(save_path, "avc1")
+    yield from _add(save_path.with_suffix(".avi"), "XVID")
+    yield from _add(save_path.with_suffix(".avi"), "MJPG")
+
+
+def _open_video_writer(save_path: Path, fps: float, frame_size: tuple[int, int]):
+    width, height = _normalize_frame_size(frame_size)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    effective_fps = fps if fps > 0 else 30.0
+    attempted_targets = []
+
+    for candidate_path, codec in _iter_video_writer_targets(save_path):
+        writer = cv2.VideoWriter(
+            str(candidate_path),
+            cv2.VideoWriter_fourcc(*codec),
+            effective_fps,
+            (width, height),
+        )
+        if writer.isOpened():
+            return writer, candidate_path, (width, height), codec
+        attempted_targets.append(f"{candidate_path.name} ({codec})")
+        writer.release()
+
+    raise RuntimeError(
+        f"Unable to open a video writer for {save_path}. Tried: {', '.join(attempted_targets)}."
+    )
+
+
+def _prepare_frame_for_writer(frame, target_size: tuple[int, int]):
+    target_width, target_height = target_size
+    current_height, current_width = frame.shape[:2]
+
+    if current_width == target_width and current_height == target_height:
+        return frame
+
+    # Prefer dropping a trailing row/column over resampling when we only adjusted odd dimensions.
+    if current_width >= target_width and current_height >= target_height:
+        cropped = frame[:target_height, :target_width]
+        if cropped.shape[1] == target_width and cropped.shape[0] == target_height:
+            return cropped
+
+    return cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
+
+
+def _finalize_saved_video(video_writer, save_path: Path | None, save_error: str | None):
+    if video_writer is not None:
+        try:
+            video_writer.release()
+        except Exception as exc:
+            if save_error is None:
+                save_error = f"Failed to finalize annotated video at {save_path}: {exc}"
+        video_writer = None
+
+    if save_path:
+        try:
+            if not save_path.exists():
+                if save_error is None:
+                    save_error = f"Annotated video was not created at {save_path}."
+            elif save_path.stat().st_size <= 0 and save_error is None:
+                save_error = f"Annotated video at {save_path} is empty."
+        except Exception as exc:
+            if save_error is None:
+                save_error = f"Failed to verify annotated video at {save_path}: {exc}"
+
+    return video_writer, save_error
+
+
 def _predict_frame(detector: YOLO, frame, conf: float, max_det: int, device: str | int):
     result = detector.predict(
         source=frame,
@@ -121,10 +268,14 @@ def main():
                         help="Path to trained detector weights. Defaults to the active model, then models/best_model.pt.")
     parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold.")
     parser.add_argument("--max_det", type=int, default=10, help="Maximum detections per frame.")
+    parser.add_argument("--save_path", default=None, help="Optional path to save an annotated video file.")
+    parser.add_argument("--stop_file", default=None, help="Optional sentinel file that requests a graceful stop.")
     args = parser.parse_args()
 
     video_path = Path(args.video_path)
     model_path = Path(resolve_inference_model_source(args.model, PROJECT_ROOT))
+    save_path = Path(args.save_path).expanduser().resolve() if args.save_path else None
+    stop_file = Path(args.stop_file).expanduser().resolve() if args.stop_file else None
 
     if not video_path.exists():
         _emit("error", message=f"Video not found: {video_path}")
@@ -150,6 +301,21 @@ def main():
         device = 0 if torch.cuda.is_available() else "cpu"
         device_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
         detector = YOLO(str(model_path))
+        requested_save_path = str(save_path) if save_path else None
+        video_writer = None
+        actual_save_path = save_path
+        writer_frame_size = None
+        save_error = None
+
+        if save_path and frame_width > 0 and frame_height > 0:
+            try:
+                video_writer, actual_save_path, writer_frame_size, _ = _open_video_writer(
+                    save_path,
+                    fps,
+                    (frame_width, frame_height),
+                )
+            except Exception as exc:
+                save_error = str(exc)
 
         _emit(
             "started",
@@ -163,13 +329,20 @@ def main():
             frame_height=frame_height,
             device=f"cuda:{device}" if device != "cpu" else "cpu",
             device_name=device_name,
+            saved_video_path=str(actual_save_path) if actual_save_path else requested_save_path,
+            save_error=save_error,
         )
 
         processed_frames = 0
         frame_index = 0
         progress_interval = max(1, min(30, int(round(fps))))
+        stop_requested = False
 
         while True:
+            if stop_file and stop_file.exists():
+                stop_requested = True
+                break
+
             success, frame = capture.read()
             if not success:
                 break
@@ -181,6 +354,20 @@ def main():
                 max_det=args.max_det,
                 device=device,
             )
+
+            if save_path and video_writer is None and save_error is None:
+                try:
+                    video_writer, actual_save_path, writer_frame_size, _ = _open_video_writer(
+                        save_path,
+                        fps,
+                        (frame.shape[1], frame.shape[0]),
+                    )
+                except Exception as exc:
+                    save_error = str(exc)
+
+            if video_writer is not None:
+                rendered_frame = _render_annotated_frame(frame, detections)
+                video_writer.write(_prepare_frame_for_writer(rendered_frame, writer_frame_size))
 
             _emit(
                 "frame",
@@ -205,17 +392,32 @@ def main():
             frame_index += 1
 
         total_frames = frame_count if frame_count > 0 else processed_frames
-        _emit(
-            "complete",
-            processed_frames=processed_frames,
-            total_frames=total_frames,
-            percent=100.0 if total_frames > 0 else 0.0,
-        )
+        video_writer, save_error = _finalize_saved_video(video_writer, actual_save_path, save_error)
+        if stop_requested:
+            _emit(
+                "stopped",
+                processed_frames=processed_frames,
+                total_frames=total_frames,
+                percent=(processed_frames / total_frames) * 100 if total_frames > 0 else 0.0,
+                saved_video_path=str(actual_save_path) if actual_save_path else requested_save_path,
+                save_error=save_error,
+            )
+        else:
+            _emit(
+                "complete",
+                processed_frames=processed_frames,
+                total_frames=total_frames,
+                percent=100.0 if total_frames > 0 else 0.0,
+                saved_video_path=str(actual_save_path) if actual_save_path else requested_save_path,
+                save_error=save_error,
+            )
     except Exception as exc:
         _emit("error", message=str(exc))
         sys.exit(1)
     finally:
         capture.release()
+        if "video_writer" in locals() and video_writer is not None:
+            video_writer.release()
 
 
 if __name__ == "__main__":

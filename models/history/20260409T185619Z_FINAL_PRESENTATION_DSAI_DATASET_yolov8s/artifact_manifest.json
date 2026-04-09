@@ -1,0 +1,243 @@
+{
+  "generated_at": "2026-04-09T19:51:27.098Z",
+  "ultralytics_run_dir": "ultralytics_run",
+  "images": [
+    {
+      "key": "boxf1_curve_png",
+      "label": "Box F1 Curve",
+      "path": "ultralytics_run\\BoxF1_curve.png",
+      "relative_path": "BoxF1_curve.png",
+      "category": "plot"
+    },
+    {
+      "key": "boxp_curve_png",
+      "label": "Box P Curve",
+      "path": "ultralytics_run\\BoxP_curve.png",
+      "relative_path": "BoxP_curve.png",
+      "category": "plot"
+    },
+    {
+      "key": "boxpr_curve_png",
+      "label": "Box PR Curve",
+      "path": "ultralytics_run\\BoxPR_curve.png",
+      "relative_path": "BoxPR_curve.png",
+      "category": "plot"
+    },
+    {
+      "key": "boxr_curve_png",
+      "label": "Box R Curve",
+      "path": "ultralytics_run\\BoxR_curve.png",
+      "relative_path": "BoxR_curve.png",
+      "category": "plot"
+    },
+    {
+      "key": "confusion_matrix_normalized_png",
+      "label": "Confusion Matrix Normalized",
+      "path": "ultralytics_run\\confusion_matrix_normalized.png",
+      "relative_path": "confusion_matrix_normalized.png",
+      "category": "plot"
+    },
+    {
+      "key": "confusion_matrix_png",
+      "label": "Confusion Matrix",
+      "path": "ultralytics_run\\confusion_matrix.png",
+      "relative_path": "confusion_matrix.png",
+      "category": "plot"
+    },
+    {
+      "key": "labels_jpg",
+      "label": "Labels",
+      "path": "ultralytics_run\\labels.jpg",
+      "relative_path": "labels.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "results_png",
+      "label": "Results",
+      "path": "ultralytics_run\\results.png",
+      "relative_path": "results.png",
+      "category": "plot"
+    },
+    {
+      "key": "train_batch0_jpg",
+      "label": "Train Batch0",
+      "path": "ultralytics_run\\train_batch0.jpg",
+      "relative_path": "train_batch0.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "train_batch1_jpg",
+      "label": "Train Batch1",
+      "path": "ultralytics_run\\train_batch1.jpg",
+      "relative_path": "train_batch1.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "train_batch2_jpg",
+      "label": "Train Batch2",
+      "path": "ultralytics_run\\train_batch2.jpg",
+      "relative_path": "train_batch2.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "train_batch462_jpg",
+      "label": "Train Batch462",
+      "path": "ultralytics_run\\train_batch462.jpg",
+      "relative_path": "train_batch462.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "train_batch463_jpg",
+      "label": "Train Batch463",
+      "path": "ultralytics_run\\train_batch463.jpg",
+      "relative_path": "train_batch463.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "train_batch464_jpg",
+      "label": "Train Batch464",
+      "path": "ultralytics_run\\train_batch464.jpg",
+      "relative_path": "train_batch464.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "train_batch840_jpg",
+      "label": "Train Batch840",
+      "path": "ultralytics_run\\train_batch840.jpg",
+      "relative_path": "train_batch840.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "train_batch841_jpg",
+      "label": "Train Batch841",
+      "path": "ultralytics_run\\train_batch841.jpg",
+      "relative_path": "train_batch841.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "train_batch842_jpg",
+      "label": "Train Batch842",
+      "path": "ultralytics_run\\train_batch842.jpg",
+      "relative_path": "train_batch842.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "train_batch8320_jpg",
+      "label": "Train Batch8320",
+      "path": "ultralytics_run\\train_batch8320.jpg",
+      "relative_path": "train_batch8320.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "train_batch8321_jpg",
+      "label": "Train Batch8321",
+      "path": "ultralytics_run\\train_batch8321.jpg",
+      "relative_path": "train_batch8321.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "train_batch8322_jpg",
+      "label": "Train Batch8322",
+      "path": "ultralytics_run\\train_batch8322.jpg",
+      "relative_path": "train_batch8322.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "val_batch0_labels_jpg",
+      "label": "Val Batch0 Labels",
+      "path": "ultralytics_run\\val_batch0_labels.jpg",
+      "relative_path": "val_batch0_labels.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "val_batch0_pred_jpg",
+      "label": "Val Batch0 Pred",
+      "path": "ultralytics_run\\val_batch0_pred.jpg",
+      "relative_path": "val_batch0_pred.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "val_batch1_labels_jpg",
+      "label": "Val Batch1 Labels",
+      "path": "ultralytics_run\\val_batch1_labels.jpg",
+      "relative_path": "val_batch1_labels.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "val_batch1_pred_jpg",
+      "label": "Val Batch1 Pred",
+      "path": "ultralytics_run\\val_batch1_pred.jpg",
+      "relative_path": "val_batch1_pred.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "val_batch2_labels_jpg",
+      "label": "Val Batch2 Labels",
+      "path": "ultralytics_run\\val_batch2_labels.jpg",
+      "relative_path": "val_batch2_labels.jpg",
+      "category": "preview"
+    },
+    {
+      "key": "val_batch2_pred_jpg",
+      "label": "Val Batch2 Pred",
+      "path": "ultralytics_run\\val_batch2_pred.jpg",
+      "relative_path": "val_batch2_pred.jpg",
+      "category": "preview"
+    }
+  ],
+  "tables": [
+    {
+      "key": "args_yaml",
+      "label": "Args",
+      "path": "ultralytics_run\\args.yaml",
+      "relative_path": "args.yaml",
+      "format": "YAML"
+    },
+    {
+      "key": "results_csv",
+      "label": "Results",
+      "path": "ultralytics_run\\results.csv",
+      "relative_path": "results.csv",
+      "format": "CSV"
+    }
+  ],
+  "weights": [
+    {
+      "key": "best_weights",
+      "label": "Best Training Weights",
+      "path": "ultralytics_run\\weights\\best.pt",
+      "relative_path": "weights\\best.pt"
+    },
+    {
+      "key": "stable_best_model",
+      "label": "Stable Best Model",
+      "path": "best_model.pt",
+      "relative_path": "best_model.pt"
+    },
+    {
+      "key": "weights_best_pt",
+      "label": "Best",
+      "path": "ultralytics_run\\weights\\best.pt",
+      "relative_path": "weights\\best.pt"
+    },
+    {
+      "key": "weights_last_pt",
+      "label": "Last",
+      "path": "ultralytics_run\\weights\\last.pt",
+      "relative_path": "weights\\last.pt"
+    }
+  ],
+  "evaluation": {
+    "metrics_path": "test_evaluation\\test_metrics.json",
+    "review_manifest_path": "test_evaluation\\test_review_manifest.json",
+    "review_csv_path": "test_evaluation\\test_predictions.csv",
+    "review_images_dir": "test_evaluation\\test_review_images"
+  },
+  "counts": {
+    "imageCount": 26,
+    "plotCount": 7,
+    "previewCount": 19,
+    "tableCount": 2,
+    "weightCount": 4
+  }
+}

@@ -72,6 +72,13 @@ const normalizeDetections = (detections) => (Array.isArray(detections) ? detecti
     };
 });
 
+const EMPTY_VIDEO_LAYOUT = {
+    width: 0,
+    height: 0,
+    left: 0,
+    top: 0,
+};
+
 const createEmptyMeta = () => ({
     fps: 0,
     frameCount: 0,
@@ -89,6 +96,31 @@ const createEmptyProgress = () => ({
     total: 0,
     percent: 0,
 });
+
+const resolveDetectionBounds = (detection) => {
+    const normalizedXYXY = Array.isArray(detection?.bbox_xyxy_normalized) ? detection.bbox_xyxy_normalized : null;
+
+    let left = Number(detection?.x_center || 0) - Number(detection?.width || 0) / 2;
+    let top = Number(detection?.y_center || 0) - Number(detection?.height || 0) / 2;
+    let right = left + Number(detection?.width || 0);
+    let bottom = top + Number(detection?.height || 0);
+
+    if (normalizedXYXY?.length === 4) {
+        [left, top, right, bottom] = normalizedXYXY.map((value) => Number(value || 0));
+    }
+
+    const safeLeft = clamp(Math.min(left, right), 0, 1);
+    const safeTop = clamp(Math.min(top, bottom), 0, 1);
+    const safeRight = clamp(Math.max(left, right), 0, 1);
+    const safeBottom = clamp(Math.max(top, bottom), 0, 1);
+
+    return {
+        left: safeLeft,
+        top: safeTop,
+        width: Math.max(0, safeRight - safeLeft),
+        height: Math.max(0, safeBottom - safeTop),
+    };
+};
 
 const statusLabels = {
     idle: 'Idle',
@@ -110,6 +142,7 @@ export default function VideoTesterWorkspace({
     setVideoPredictionActive,
     activeTrainingRun,
 }) {
+    const stageRef = useRef(null);
     const videoRef = useRef(null);
     const animationRef = useRef(null);
     const sessionIdRef = useRef(null);
@@ -132,6 +165,11 @@ export default function VideoTesterWorkspace({
     const [isPlaying, setIsPlaying] = useState(false);
     const [lastError, setLastError] = useState('');
     const [lastUpdatedFrame, setLastUpdatedFrame] = useState(null);
+    const [videoLayout, setVideoLayout] = useState(EMPTY_VIDEO_LAYOUT);
+    const [saveAnnotatedVideo, setSaveAnnotatedVideo] = useState(true);
+    const [saveRequestedPath, setSaveRequestedPath] = useState('');
+    const [savedVideoPath, setSavedVideoPath] = useState('');
+    const [saveIssue, setSaveIssue] = useState('');
 
     appendLogRef.current = appendLog;
     processingModeRef.current = predictionMode;
@@ -149,12 +187,54 @@ export default function VideoTesterWorkspace({
         : 'Start playback immediately and paint boxes as each processed frame becomes available.';
     const displayedModelPath = videoMeta.modelPath || activeTrainingRun?.stableBestModel || 'models/active_model.json';
     const displayedModelLabel = activeTrainingRun?.modelChoice || activeTrainingRun?.modelLabel || 'Active model';
+    const displayedOutputPath = savedVideoPath || saveRequestedPath;
+    const saveStatusLabel = !saveAnnotatedVideo
+        ? 'Disabled'
+        : saveIssue
+            ? 'Save issue'
+            : savedVideoPath
+                ? 'Saved'
+                : saveRequestedPath
+                    ? 'Pending'
+                    : 'Armed';
 
     const stopSyncLoop = () => {
         if (animationRef.current) {
             window.cancelAnimationFrame(animationRef.current);
             animationRef.current = null;
         }
+    };
+
+    const updateVideoLayout = () => {
+        const stage = stageRef.current;
+        const video = videoRef.current;
+        const intrinsicWidth = video?.videoWidth || videoMetaRef.current.width || 0;
+        const intrinsicHeight = video?.videoHeight || videoMetaRef.current.height || 0;
+        const stageWidth = stage?.clientWidth || 0;
+        const stageHeight = stage?.clientHeight || 0;
+
+        if (!stage || !video || !intrinsicWidth || !intrinsicHeight || !stageWidth || !stageHeight) {
+            setVideoLayout((prev) => (
+                prev.width || prev.height || prev.left || prev.top ? EMPTY_VIDEO_LAYOUT : prev
+            ));
+            return;
+        }
+
+        const scale = Math.min(stageWidth / intrinsicWidth, stageHeight / intrinsicHeight);
+        const width = intrinsicWidth * scale;
+        const height = intrinsicHeight * scale;
+        const nextLayout = {
+            width,
+            height,
+            left: (stageWidth - width) / 2,
+            top: (stageHeight - height) / 2,
+        };
+
+        setVideoLayout((prev) => {
+            const changed = ['width', 'height', 'left', 'top']
+                .some((key) => Math.abs((prev[key] || 0) - nextLayout[key]) > 0.5);
+            return changed ? nextLayout : prev;
+        });
     };
 
     const getEffectiveFps = () => {
@@ -223,6 +303,10 @@ export default function VideoTesterWorkspace({
         setIsPlaying(false);
         setLastError('');
         setLastUpdatedFrame(null);
+        setVideoLayout(EMPTY_VIDEO_LAYOUT);
+        setSaveRequestedPath('');
+        setSavedVideoPath('');
+        setSaveIssue('');
     };
 
     const updateVideoMetaFromElement = () => {
@@ -235,6 +319,7 @@ export default function VideoTesterWorkspace({
             height: video.videoHeight || prev.height,
             sourcePath: videoPathRef.current || prev.sourcePath,
         }));
+        window.requestAnimationFrame(updateVideoLayout);
     };
 
     const attemptPlay = async () => {
@@ -290,6 +375,7 @@ export default function VideoTesterWorkspace({
         const result = await window.electronAPI.startVideoPrediction({
             videoPath,
             mode: predictionMode,
+            saveOutput: saveAnnotatedVideo,
         });
 
         if (result?.error) {
@@ -312,6 +398,16 @@ export default function VideoTesterWorkspace({
         setProcessingState('stopping');
         appendLogRef.current?.('[Video] Stopping active prediction session...');
         await window.electronAPI.stopVideoPrediction();
+    };
+
+    const handleRevealSavedVideo = async () => {
+        if (!savedVideoPath || !window.electronAPI?.revealPath) return;
+        const result = await window.electronAPI.revealPath(savedVideoPath);
+        if (result?.error) {
+            appendLogRef.current?.(`[Video][Save] ${result.error}`);
+            return;
+        }
+        appendLogRef.current?.(`[Video] Revealed annotated video at ${savedVideoPath}.`);
     };
 
     const handleTogglePlay = async () => {
@@ -346,6 +442,7 @@ export default function VideoTesterWorkspace({
             }
 
             if (payload.type === 'started') {
+                const savePath = String(payload.saved_video_path || '');
                 const nextMeta = {
                     fps: Number(payload.fps || 0),
                     frameCount: Number(payload.frame_count || 0),
@@ -363,6 +460,9 @@ export default function VideoTesterWorkspace({
                     total: nextMeta.frameCount,
                     percent: 0,
                 });
+                setSaveRequestedPath(savePath);
+                setSavedVideoPath('');
+                setSaveIssue(payload.save_error || '');
                 setProcessingState('processing');
                 setLastError('');
                 return;
@@ -400,11 +500,15 @@ export default function VideoTesterWorkspace({
             if (payload.type === 'complete') {
                 const processed = Number(payload.processed_frames || 0);
                 const total = Number(payload.total_frames || processed || videoMetaRef.current.frameCount || 0);
+                const savePath = String(payload.saved_video_path || '');
                 setProcessingProgress({
                     processed,
                     total,
                     percent: total > 0 ? 100 : 0,
                 });
+                setSaveRequestedPath(savePath);
+                setSavedVideoPath(savePath && !payload.save_error ? savePath : '');
+                setSaveIssue(payload.save_error || '');
                 setProcessingState(processingModeRef.current === 'precompute' ? 'ready' : 'complete');
                 setAppBusy(false);
                 setVideoPredictionActive(false);
@@ -420,12 +524,17 @@ export default function VideoTesterWorkspace({
             }
 
             if (payload.type === 'stopped') {
+                const processed = Number(payload.processed_frames || 0);
+                const savePath = String(payload.saved_video_path || '');
                 stopSyncLoop();
                 const video = videoRef.current;
                 if (video) {
                     video.pause();
                 }
                 setIsPlaying(false);
+                setSaveRequestedPath(savePath);
+                setSavedVideoPath(savePath && processed > 0 && !payload.save_error ? savePath : '');
+                setSaveIssue(payload.save_error || '');
                 setProcessingState('stopped');
                 setAppBusy(false);
                 setVideoPredictionActive(false);
@@ -442,6 +551,7 @@ export default function VideoTesterWorkspace({
                 setIsPlaying(false);
                 setProcessingState('error');
                 setLastError(payload.message || 'Video prediction failed.');
+                setSaveIssue(payload.save_error || '');
                 setAppBusy(false);
                 setVideoPredictionActive(false);
                 sessionIdRef.current = null;
@@ -472,10 +582,43 @@ export default function VideoTesterWorkspace({
         resetPredictionState();
     }, [predictionMode]);
 
+    useEffect(() => {
+        if (!videoPath) {
+            setVideoLayout(EMPTY_VIDEO_LAYOUT);
+            return undefined;
+        }
+
+        const queueLayoutUpdate = () => {
+            window.requestAnimationFrame(updateVideoLayout);
+        };
+
+        queueLayoutUpdate();
+
+        const resizeObserver = typeof window.ResizeObserver === 'function'
+            ? new window.ResizeObserver(() => queueLayoutUpdate())
+            : null;
+
+        if (resizeObserver) {
+            if (stageRef.current) {
+                resizeObserver.observe(stageRef.current);
+            }
+            if (videoRef.current) {
+                resizeObserver.observe(videoRef.current);
+            }
+        }
+
+        window.addEventListener('resize', queueLayoutUpdate);
+
+        return () => {
+            resizeObserver?.disconnect();
+            window.removeEventListener('resize', queueLayoutUpdate);
+        };
+    }, [videoPath, videoMeta.width, videoMeta.height]);
+
     return (
         <div className="flex flex-col h-full space-y-6">
             <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 flex flex-col gap-6">
-                <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr_auto_auto] gap-4">
+                <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.75fr_0.95fr_auto_auto] gap-4">
                     <div className="flex flex-col gap-2">
                         <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Video Source</label>
                         <div className="px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-300 font-mono break-all">
@@ -493,6 +636,19 @@ export default function VideoTesterWorkspace({
                             <option value="precompute">Precompute + sync</option>
                             <option value="stream">Frame-by-frame live</option>
                         </select>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Output</label>
+                        <label className="px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-300 flex items-center gap-3 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={saveAnnotatedVideo}
+                                onChange={(event) => setSaveAnnotatedVideo(event.target.checked)}
+                                disabled={isVideoPredictionActive || busyWithOtherProcess}
+                                className="accent-rose-500"
+                            />
+                            <span>{saveAnnotatedVideo ? 'Save annotated video to Downloads' : 'Do not save annotated output'}</span>
+                        </label>
                     </div>
                     <button
                         onClick={handleSelectVideo}
@@ -542,15 +698,19 @@ export default function VideoTesterWorkspace({
             ) : (
                 <div className="grid flex-1 min-h-[360px] grid-cols-1 xl:grid-cols-[minmax(0,1.45fr)_390px] gap-6">
                     <div className="rounded-xl border-2 border-slate-700 bg-black min-h-[360px] flex flex-col overflow-hidden">
-                        <div className="flex-1 flex items-center justify-center overflow-hidden p-6 py-8">
-                            <div className="relative inline-block max-w-full max-h-full shadow-2xl">
+                        <div className="flex-1 overflow-hidden p-4 sm:p-6">
+                            <div
+                                ref={stageRef}
+                                className="relative h-full min-h-[260px] w-full overflow-hidden rounded-xl bg-black shadow-2xl"
+                            >
                                 <video
                                     ref={videoRef}
                                     src={toFileUrl(videoPath)}
-                                    className="max-w-full max-h-[50vh] object-contain block rounded"
+                                    className="block h-full w-full object-contain rounded-xl"
                                     onLoadedMetadata={() => {
                                         updateVideoMetaFromElement();
                                         syncDetectionsForFrame(0);
+                                        window.requestAnimationFrame(updateVideoLayout);
                                         if (autoplayPendingRef.current && processingModeRef.current === 'stream') {
                                             attemptPlay();
                                         }
@@ -572,28 +732,41 @@ export default function VideoTesterWorkspace({
                                     }}
                                 />
 
-                                {currentDetections.map((detection, index) => {
-                                    const chrome = getDetectionChrome(detection.class_key || detection.class_name);
-                                    return (
-                                        <div
-                                            key={`${index}-${detection.class_id}-${detection.confidence}`}
-                                            className={`absolute border-2 ${chrome.border} ${chrome.fill} ${chrome.glow} z-10 transition-all duration-150 pointer-events-none`}
-                                            style={{
-                                                left: `${(detection.x_center - detection.width / 2) * 100}%`,
-                                                top: `${(detection.y_center - detection.height / 2) * 100}%`,
-                                                width: `${detection.width * 100}%`,
-                                                height: `${detection.height * 100}%`,
-                                            }}
-                                        >
-                                            <div className={`absolute -top-6 left-0 px-2 py-0.5 ${chrome.badge} text-[10px] font-bold uppercase tracking-wider text-white rounded`}>
-                                                {detection.class_name} {(Number(detection.confidence || 0) * 100).toFixed(0)}%
-                                            </div>
-                                        </div>
-                                    );
-                                })}
+                                {videoLayout.width > 0 && videoLayout.height > 0 && (
+                                    <div
+                                        className="pointer-events-none absolute z-10"
+                                        style={{
+                                            left: `${videoLayout.left}px`,
+                                            top: `${videoLayout.top}px`,
+                                            width: `${videoLayout.width}px`,
+                                            height: `${videoLayout.height}px`,
+                                        }}
+                                    >
+                                        {currentDetections.map((detection, index) => {
+                                            const chrome = getDetectionChrome(detection.class_key || detection.class_name);
+                                            const bounds = resolveDetectionBounds(detection);
+                                            return (
+                                                <div
+                                                    key={`${index}-${detection.class_id}-${detection.confidence}`}
+                                                    className={`absolute border-2 ${chrome.border} ${chrome.fill} ${chrome.glow} transition-all duration-150`}
+                                                    style={{
+                                                        left: `${bounds.left * 100}%`,
+                                                        top: `${bounds.top * 100}%`,
+                                                        width: `${bounds.width * 100}%`,
+                                                        height: `${bounds.height * 100}%`,
+                                                    }}
+                                                >
+                                                    <div className={`absolute -top-6 left-0 px-2 py-0.5 ${chrome.badge} text-[10px] font-bold uppercase tracking-wider text-white rounded`}>
+                                                        {detection.class_name} {(Number(detection.confidence || 0) * 100).toFixed(0)}%
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
 
                                 {predictionMode === 'precompute' && processingState === 'processing' && (
-                                    <div className="absolute inset-0 bg-slate-950/50 flex items-center justify-center rounded">
+                                    <div className="absolute inset-0 bg-slate-950/50 flex items-center justify-center rounded-xl">
                                         <div className="px-4 py-3 bg-slate-900/90 border border-slate-700 rounded-xl text-sm text-slate-100 font-semibold">
                                             Processing video before playback...
                                         </div>
@@ -702,7 +875,28 @@ export default function VideoTesterWorkspace({
                                     <div className="text-slate-500">Device</div>
                                     <div className="font-bold text-white break-all">{videoMeta.deviceName || videoMeta.device || 'n/a'}</div>
                                 </div>
+                                <div>
+                                    <div className="text-slate-500">Save Output</div>
+                                    <div className="font-bold text-white">{saveStatusLabel}</div>
+                                </div>
+                                <div>
+                                    <div className="text-slate-500">Saved File</div>
+                                    <div className="font-bold text-white break-all">{displayedOutputPath || 'n/a'}</div>
+                                </div>
                             </div>
+                            {saveIssue && (
+                                <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200 break-words">
+                                    {saveIssue}
+                                </div>
+                            )}
+                            {savedVideoPath && !saveIssue && (
+                                <button
+                                    onClick={handleRevealSavedVideo}
+                                    className="mt-3 inline-flex items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.16em] text-emerald-200 transition hover:bg-emerald-500/20"
+                                >
+                                    Show In Downloads
+                                </button>
+                            )}
                         </div>
 
                         <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-4 flex flex-col gap-3 min-h-0 flex-1">

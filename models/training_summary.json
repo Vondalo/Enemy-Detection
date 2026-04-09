@@ -1,16 +1,17 @@
 {
-  "run_id": "20260405T152552_yolov8m_213080",
-  "created_at": "2026-04-05T15:25:52.529723+00:00",
-  "model_choice": "yolov8m",
-  "chosen_model": "C:\\Users\\Eray\\Documents\\GitHub\\Enemy-Detection\\yolov8m.pt",
-  "best_weights": "models\\runs\\enemy_detector\\weights\\best.pt",
+  "run_id": "20260409T185619_yolov8s_355920",
+  "created_at": "2026-04-09T18:56:19.918975+00:00",
+  "model_choice": "yolov8s",
+  "chosen_model": "C:\\Users\\Eray\\Documents\\GitHub\\Enemy-Detection\\yolov8s.pt",
+  "best_weights": "C:\\Users\\Eray\\Documents\\GitHub\\Enemy-Detection\\runs\\detect\\models\\runs\\enemy_detector\\weights\\best.pt",
   "stable_best_model": "models\\best_model.pt",
+  "ultralytics_run_dir": "runs\\detect\\models\\runs\\enemy_detector",
   "training_source": {
-    "dataset_name": "ka alter",
+    "dataset_name": "FINAL_PRESENTATION_DSAI_DATASET",
     "dataset_dir": null,
-    "train_csv": "C:\\Users\\Eray\\Documents\\GitHub\\Enemy-Detection\\data_sets\\ka alter\\augmented_labels.csv",
-    "train_dir": "C:\\Users\\Eray\\Documents\\GitHub\\Enemy-Detection\\data_sets\\ka alter\\images",
-    "csv_name": "augmented_labels.csv"
+    "train_csv": "C:\\Users\\Eray\\Documents\\GitHub\\Enemy-Detection\\data_sets\\FINAL_PRESENTATION_DSAI_DATASET\\labels_merged.csv",
+    "train_dir": "C:\\Users\\Eray\\Documents\\GitHub\\Enemy-Detection\\data_sets\\FINAL_PRESENTATION_DSAI_DATASET\\images",
+    "csv_name": "labels_merged.csv"
   },
   "dataset": {
     "dataset_mode": "generated_from_csv",
@@ -19,34 +20,41 @@
       "enemy",
       "player"
     ],
-    "train_annotations": 1536,
-    "test_annotations": 850,
-    "val_annotations": 850,
-    "train_images": 965,
-    "test_images": 216,
-    "val_images": 216,
+    "train_annotations": 4107,
+    "test_annotations": 1628,
+    "val_annotations": 1628,
+    "train_images": 2535,
+    "test_images": 1389,
+    "val_images": 1389,
     "train_video_ids": [
-      "final_merged__Federico_sammelt__i_tried_the_new_season [C-SDrECvTa4]",
-      "party_girl_augmented__Party_Girl_Fortnite_Montage [uXGC9gKcheI]"
+      "merged_9.04_augmented__Richi_Sammelt__Diamonds_Season_2_Fortnite_Montage [mdioR_zJ3og]",
+      "merged_9.04_augmented__zweitesSetRichi_Sammelt__Meet_Me_Halfway_Fortnite_Montage [DaYwUBhLTBI]",
+      "ka_alter__party_girl_augmented__Party_Girl_Fortnite_Montage [uXGC9gKcheI]",
+      "merged_9.04_augmented__Federico_sammelt_numero_uno__Forgive_Me_Fortnite_Montage [DbZ_ayr8b84]",
+      "ka_alter__final_merged__Federico_sammelt__i_tried_the_new_season [C-SDrECvTa4]",
+      "ka_alter__final_merged__Ich_sammel__i_tried_the_new_season [C-SDrECvTa4]"
     ],
     "test_video_ids": [
-      "final_merged__Ich_sammel__i_tried_the_new_season [C-SDrECvTa4]"
+      "merged_9.04_augmented__erays_neues_video__googlevideo",
+      "merged_9.04_augmented__Federico_sammelt_numero_dos__Sins_Fortnite_Montage [e28vBeZ382U]"
     ],
     "val_video_ids": [
-      "final_merged__Ich_sammel__i_tried_the_new_season [C-SDrECvTa4]"
+      "merged_9.04_augmented__erays_neues_video__googlevideo",
+      "merged_9.04_augmented__Federico_sammelt_numero_dos__Sins_Fortnite_Montage [e28vBeZ382U]"
     ],
     "bbox_sources": {
-      "manual_box": 2386
+      "manual_box": 5730,
+      "negative_augmented": 5
     },
     "test_split": 0.2,
-    "test_split_effective_images": 0.18289585097375105,
+    "test_split_effective_images": 0.35397553516819574,
     "test_images_dir": "C:\\Users\\Eray\\Documents\\GitHub\\Enemy-Detection\\models\\prepared_dataset\\val\\images",
     "test_labels_csv": "C:\\Users\\Eray\\Documents\\GitHub\\Enemy-Detection\\models\\prepared_dataset\\val\\labels.csv",
     "internal_test_dir_name": "val"
   },
-  "epochs": 200,
-  "batch_size": 16,
-  "imgsz": 960,
+  "epochs": 75,
+  "batch_size": 32,
+  "imgsz": 640,
   "requested_device_mode": "cuda",
   "device": "0",
   "use_cuda": true,
@@ -61,55 +69,55 @@
     "user_split_name": "test",
     "internal_split_name": "val",
     "metrics": {
-      "precision": 0.8043279927224775,
-      "recall": 0.6570540242966352,
-      "map50": 0.7302837685210753,
-      "map75": 0.46515153193382774,
-      "map50_95": 0.43941946624779604,
-      "fitness": 0.43941946624779604,
+      "precision": 0.8919519092388819,
+      "recall": 0.8819860420393804,
+      "map50": 0.9034128521507234,
+      "map75": 0.6662497871733317,
+      "map50_95": 0.6314905918260676,
+      "fitness": 0.6314905918260676,
       "per_class": [
         {
           "Class": "enemy",
-          "Images": 558,
-          "Instances": 2279,
-          "Box-P": 0.70881,
-          "Box-R": 0.543659,
-          "Box-F1": 0.615346,
-          "mAP50": 0.601933,
-          "mAP50-95": 0.267759
+          "Images": 828,
+          "Instances": 2551,
+          "Box-P": 0.829573,
+          "Box-R": 0.845551,
+          "Box-F1": 0.837486,
+          "mAP50": 0.848535,
+          "mAP50-95": 0.574737
         },
         {
           "Class": "player",
-          "Images": 758,
-          "Instances": 758,
-          "Box-P": 0.899846,
-          "Box-R": 0.770449,
-          "Box-F1": 0.830135,
-          "mAP50": 0.858635,
-          "mAP50-95": 0.611079
+          "Images": 2116,
+          "Instances": 2116,
+          "Box-P": 0.954331,
+          "Box-R": 0.918421,
+          "Box-F1": 0.936032,
+          "mAP50": 0.958291,
+          "mAP50-95": 0.688244
         }
       ],
       "results_dict": {
-        "metrics/precision(B)": 0.8043279927224775,
-        "metrics/recall(B)": 0.6570540242966352,
-        "metrics/mAP50(B)": 0.7302837685210753,
-        "metrics/mAP50-95(B)": 0.43941946624779604,
-        "fitness": 0.43941946624779604
+        "metrics/precision(B)": 0.8919519092388819,
+        "metrics/recall(B)": 0.8819860420393804,
+        "metrics/mAP50(B)": 0.9034128521507234,
+        "metrics/mAP50-95(B)": 0.6314905918260676,
+        "fitness": 0.6314905918260676
       }
     },
     "review_available": true,
     "review_summary": {
-      "images": 216,
-      "ground_truth_boxes": 850,
-      "predicted_boxes": 494,
-      "matched_boxes": 423,
-      "missed_ground_truth_boxes": 427,
-      "false_positive_boxes": 71,
+      "images": 1389,
+      "ground_truth_boxes": 1628,
+      "predicted_boxes": 1331,
+      "matched_boxes": 1230,
+      "missed_ground_truth_boxes": 398,
+      "false_positive_boxes": 101,
       "status_counts": {
-        "match": 70,
-        "mixed": 44,
-        "extra_prediction": 9,
-        "missed_ground_truth": 93
+        "match": 955,
+        "missed_ground_truth": 341,
+        "extra_prediction": 48,
+        "mixed": 45
       }
     },
     "iou_match_threshold": 0.5,
